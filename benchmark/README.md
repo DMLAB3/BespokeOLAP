@@ -20,6 +20,18 @@ Run only DuckDB (no snapshots required):
 python -m benchmark --systems duckdb --scale_factors 1,5,20 --benchmark tpch
 ```
 
+Run experimental spatial benchmark (DuckDB only):
+
+```bash
+python -m benchmark --systems duckdb --scale_factors 1,5 --benchmark spatial
+```
+
+Run with fixed seed for exact placeholder reproducibility:
+
+```bash
+python -m benchmark --systems duckdb --scale_factors 1 --benchmark spatial --seed 42 --csv benchmark/spatialbench_golden.csv
+```
+
 Append benchmark timings to CSV:
 
 ```bash
@@ -29,4 +41,6 @@ python -m benchmark --systems bespoke,duckdb --snapshots <hash> --scale_factors 
 ## Notes
 
 - `--snapshots` is required only when `bespoke` is included in `--systems`.
-- Query IDs are resolved from benchmark definitions (`tpch` or `ceb`), not from snapshot files.
+- Query IDs are resolved from benchmark definitions (`tpch`, `ceb`, or `spatial`), not from snapshot files.
+- Spatial benchmark currently uses two template queries (`Q1`, `Q2`) from `dataset/gen_spatial/spatial_queries.py`.
+- Spatial contract (query/data/metrics): `benchmark/SPATIALBENCH_CONTRACT.md`.

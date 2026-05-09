@@ -31,6 +31,12 @@ def build_run_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
         help="How many times to run the query list for timings.",
     )
     parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Base seed for deterministic query instantiation across repeats.",
+    )
+    parser.add_argument(
         "--csv",
         type=str,
         default="bench.csv",
@@ -40,7 +46,7 @@ def build_run_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
         "--benchmark",
         type=str,
         default="tpch",
-        help="Benchmark to run (e.g., tpch, ceb).",
+        help="Benchmark to run (e.g., tpch, ceb, spatial).",
     )
     parser.add_argument(
         "--systems",

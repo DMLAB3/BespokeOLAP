@@ -46,6 +46,11 @@ def main(args):
             wandb_id = "blqeh6i0"
         else:
             wandb_id = "fx7rshq2"
+    elif benchmark == "spatial":
+        raise ValueError(
+            "No default wandb baseline is configured for benchmark 'spatial'. "
+            "Please set a spatial wandb_id in run_optim_loop.py first."
+        )
     else:
         raise ValueError(f"Unknown benchmark {benchmark}")
 

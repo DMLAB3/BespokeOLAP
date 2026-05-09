@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from dataset.gen_ceb.ceb_queries import ceb_templates
+from dataset.gen_spatial.spatial_queries import spatial_templates
 from dataset.gen_tpch.tpch_queries import tpc_h
 
 
@@ -24,6 +25,8 @@ def write_query_and_args_file(
         benchmark_queries = tpc_h
     elif benchmark_name == "ceb":
         benchmark_queries = ceb_templates
+    elif benchmark_name == "spatial":
+        benchmark_queries = spatial_templates
     else:
         raise ValueError(f"Unknown benchmark name: {benchmark_name}")
 

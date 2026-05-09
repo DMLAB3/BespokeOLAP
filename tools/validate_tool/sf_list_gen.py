@@ -11,6 +11,9 @@ def gen_sf(benchmark: str):
             0.5,
         ]  # just two different scales to make sure that the code works well with different data.
         max_scale_factor = 2
+    elif benchmark == "spatial":
+        verify_sf_list = [1]
+        max_scale_factor = 5
     else:
         raise ValueError(f"Unknown benchmark {benchmark}")
 

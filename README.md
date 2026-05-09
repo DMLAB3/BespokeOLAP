@@ -183,6 +183,12 @@ python main.py manual \
 python -m benchmark --systems bespoke,duckdb --snapshots <hash1,hash2,...> --scale_factors 1,5,20 --benchmark tpch
 ```
 
+Experimental spatial benchmark:
+
+```bash
+python -m benchmark --systems duckdb --scale_factors 1,5 --benchmark spatial
+```
+
 See [Benchmarking guide](benchmark/README.md) for details and additional examples.
 
 ## CLI Reference
@@ -192,7 +198,7 @@ Common arguments shared across entry points:
 
 | Argument                  | Default              | Description                                                                              |
 |---------------------------|----------------------|------------------------------------------------------------------------------------------|
-| `--benchmark`             | `tpch`               | Benchmark to use (`tpch` or `ceb`).                                                      |
+| `--benchmark`             | `tpch`               | Benchmark to use (`tpch`, `ceb`, or experimental `spatial`).                             |
 | `--conv` / `--conv_name`  | *(required)*         | Conversation name (auto-prefixed with benchmark name).                                   |
 | `--model`                 | `gpt-5.2-codex`      | LLM model ID to use.                                                                     |
 | `--artifacts_dir`         | `/mnt/labstore/...`  | Directory for caches, logs, conversations, and Parquet data.                             |
@@ -254,6 +260,27 @@ To clear caches, delete the relevant subdirectories under `artifacts_dir/cache/`
 ### Benchmarking (`benchmark/`)
 
 Separate from the agent loop. See [benchmark/README.md](benchmark/README.md).
+
+### Spatial Optimization (Experimental)
+
+Spatial support is scaffolded to unblock spatial-query experiments while keeping the current TPC-H/CEB workflow stable.
+
+- Query templates: `dataset/gen_spatial/spatial_queries.py`
+- Query instantiation: `dataset/gen_spatial/gen_spatial_query.py`
+- Schema metadata: `dataset/gen_spatial/spatial_schema.py`
+- Benchmark query set: `benchmark/run.py` (`Q1`, `Q2`)
+
+Recommended optimization focus for spatial workloads:
+
+1. Add geometry-aware filtering early (bounding-box reject before exact predicates).
+2. Reorder joins to maximize spatial selectivity first.
+3. Separate storage of geometry payloads from frequently filtered scalar attributes.
+4. Add per-query timing and trace counters for predicate selectivity and candidate set sizes.
+
+Current limitations:
+
+- No default spatial wandb baseline is configured for `run_optim_loop.py`.
+- No default spatial storage-plan run-id is configured for `run_gen_base_impl.py --with_storage_plan`.
 
 ## Development
 

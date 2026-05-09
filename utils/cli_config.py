@@ -114,8 +114,8 @@ def add_common_args(
     if include_benchmark:
         parser.add_argument(
             "--benchmark",
-            default="tpch",  # options: tpch, ceb
-            help="Benchmark to use for the agent.",
+            default="tpch",  # options: tpch, ceb, spatial
+            help="Benchmark to use for the agent (tpch, ceb, spatial).",
         )
     if include_replay:
         parser.add_argument(

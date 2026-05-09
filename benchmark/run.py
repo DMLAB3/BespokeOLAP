@@ -3,6 +3,8 @@ import os
 import random
 import re
 import socket
+import hashlib
+import json
 from pathlib import Path
 from typing import Dict, List
 
@@ -110,6 +112,26 @@ def _build_runners(
     return runners
 
 
+def _validate_spatial_parquet_layout(parquet_path: Path, scale_factors: List[float]) -> None:
+    required_tables = ["points", "regions"]
+    missing_files: list[str] = []
+
+    for sf in scale_factors:
+        sf_dir = parquet_path / f"sf{sf}"
+        for table in required_tables:
+            p = sf_dir / f"{table}.parquet"
+            if not p.exists():
+                missing_files.append(p.as_posix())
+
+    if missing_files:
+        sample = "\n".join(missing_files[:10])
+        raise FileNotFoundError(
+            "Spatial benchmark requires prepared parquet inputs for tables "
+            "'points' and 'regions'. Missing files include:\n"
+            f"{sample}"
+        )
+
+
 def run_benchmark(args) -> None:
     old_umask = os.umask(0)
     try:
@@ -146,6 +168,7 @@ def run_benchmark(args) -> None:
 
         csv_writer = None
         host = socket.gethostname()
+        base_seed = int(getattr(args, "seed", 42))
         if args.csv:
             output_path = Path(args.csv)
             logger.info(f"Appending benchmark CSV to {output_path}")
@@ -159,16 +182,22 @@ def run_benchmark(args) -> None:
                     "time_ms",
                     "hostname",
                     "snapshot",
+                    "seed",
+                    "placeholders_hash",
                 ]
             )
 
         # parse scale factors
         scale_factors = _parse_scale_factors(args.scale_factors)
         logger.info(f"Scale factors: {', '.join(map(str, scale_factors))}")
+        logger.info(f"Base seed: {base_seed}")
         parquet_path = (
             Path(args.artifacts_dir) / f"{get_dataset_name(args.benchmark)}_parquet"
         )
         logger.info(f"Parquet path: {parquet_path.as_posix()}")
+
+        if args.benchmark == "spatial":
+            _validate_spatial_parquet_layout(parquet_path, scale_factors)
 
         query_ids = get_all_query_ids(args.benchmark)
 
@@ -222,7 +251,8 @@ def run_benchmark(args) -> None:
                 query_list: list[str] = []
 
                 for repeat_idx in range(args.repeat):
-                    rnd = random.Random(42 + repeat_idx)
+                    repeat_seed = base_seed + repeat_idx
+                    rnd = random.Random(repeat_seed)
                     for query_id in query_ids:
                         template, query, placeholders = gen_query_fn(
                             query_name=f"Q{query_id}", rnd=rnd
@@ -252,6 +282,13 @@ def run_benchmark(args) -> None:
                             times = timings_by_runner[runner.name]
                             t = times[idx] if times else None
                             if t is not None:
+                                placeholders_hash = hashlib.sha256(
+                                    json.dumps(
+                                        placeholder_list[idx],
+                                        sort_keys=True,
+                                        separators=(",", ":"),
+                                    ).encode("utf-8")
+                                ).hexdigest()
                                 rows_to_write.append(
                                     [
                                         query_id,
@@ -261,6 +298,8 @@ def run_benchmark(args) -> None:
                                         t,
                                         host,
                                         snapshot,
+                                        base_seed,
+                                        placeholders_hash,
                                     ]
                                 )
                         if rows_to_write:
@@ -294,6 +333,8 @@ def get_all_query_ids(benchmark: str) -> List[str]:
             "11a",
             "11b",
         ]
+    elif benchmark == "spatial":
+        query_ids = ["1", "2"]
     else:
         raise ValueError(f"Unknown benchmark: {benchmark}")
 

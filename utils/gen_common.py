@@ -24,6 +24,12 @@ def parse_query_ids(
         # convert to strings
         return [str(qid) for qid in qids]
 
+    elif benchmark == "spatial":
+        start_q = int(start_q)
+        end_q = int(end_q)
+        qids = list(range(start_q, end_q + 1))
+        return [str(qid) for qid in qids]
+
     elif benchmark == "ceb":
         ceb_query_order = [
             "1a",

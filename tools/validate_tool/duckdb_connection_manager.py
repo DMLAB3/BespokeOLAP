@@ -73,6 +73,9 @@ class DuckDBConnectionManager:
     ) -> duckdb.DuckDBPyConnection:
         # pre-load duckdb tables to warm up cache
         self.con = duckdb.connect(database=":memory:")
+        if benchmark == "spatial":
+            self._ensure_spatial_support(self.con)
+
         for table in tqdm(
             get_tables_for_benchmark(benchmark),
             desc=f"Loading DuckDB tables for SF{sf}",
@@ -81,10 +84,60 @@ class DuckDBConnectionManager:
                 f"CREATE TABLE {table} AS SELECT * FROM read_parquet('{parquet_path}/sf{sf}/{table}.parquet')"
             )
 
+        if benchmark == "spatial":
+            self._validate_spatial_data_contract(self.con)
+
         # disable parallelism in duckdb for more consistent benchmarking
         self.con.execute("PRAGMA threads=1;")
 
         return self.con
+
+    def _ensure_spatial_support(self, con: duckdb.DuckDBPyConnection) -> None:
+        try:
+            con.execute("LOAD spatial")
+        except Exception:
+            try:
+                con.execute("INSTALL spatial")
+                con.execute("LOAD spatial")
+            except Exception as exc:
+                raise RuntimeError(
+                    "DuckDB spatial extension is required for benchmark='spatial'. "
+                    "Install/load it manually (INSTALL spatial; LOAD spatial) or use a DuckDB build that includes it."
+                ) from exc
+
+        # Verify required functions used by current spatial query templates.
+        checks = [
+            "SELECT ST_AsText(ST_Point(0, 0))",
+            "SELECT ST_DWithin(ST_Point(0, 0), ST_Point(1, 1), 2)",
+            "SELECT ST_Contains(ST_GeomFromText('POLYGON((0 0,2 0,2 2,0 2,0 0))'), ST_Point(1, 1))",
+        ]
+        for stmt in checks:
+            try:
+                con.execute(stmt)
+            except Exception as exc:
+                raise RuntimeError(
+                    "DuckDB spatial capability check failed. "
+                    f"Statement failed: {stmt}"
+                ) from exc
+
+    def _validate_spatial_data_contract(self, con: duckdb.DuckDBPyConnection) -> None:
+        required_cols = {
+            "points": {"point_id", "category", "geom"},
+            "regions": {"region_id", "region_name", "geom"},
+        }
+        for table, expected_cols in required_cols.items():
+            rows = con.execute(f"PRAGMA table_info('{table}')").fetchall()
+            if not rows:
+                raise RuntimeError(
+                    f"Spatial data contract violation: missing table '{table}'."
+                )
+            actual_cols = {row[1] for row in rows}
+            missing = expected_cols - actual_cols
+            if missing:
+                raise RuntimeError(
+                    "Spatial data contract violation for table "
+                    f"'{table}'. Missing columns: {sorted(missing)}"
+                )
 
     def clear_mem_footprint(self) -> None:
         if self.con is not None:

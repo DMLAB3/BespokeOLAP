@@ -56,6 +56,11 @@ def main(args):
             from_storage_plan_snapshot = (
                 "x527bk9j"  # previous storage plan run for ceb (wandb-id)
             )
+        elif benchmark == "spatial":
+            raise ValueError(
+                "No default storage-plan run is configured for benchmark 'spatial' yet. "
+                "Run without --with_storage_plan or add a spatial wandb run-id in run_gen_base_impl.py."
+            )
         else:
             raise ValueError(f"Unknown benchmark {benchmark}")
     else:
@@ -140,6 +145,9 @@ def create_conversation(
     elif benchmark == "ceb":
         example_query = "Q42a"
         example_query_params = "42a"
+    elif benchmark == "spatial":
+        example_query = "Q2"
+        example_query_params = "2 ST_Point(-122.42, 37.77) 250.0 100"
     else:
         raise ValueError(f"Unknown benchmark {benchmark}")
 

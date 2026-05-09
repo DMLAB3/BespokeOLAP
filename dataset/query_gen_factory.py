@@ -20,6 +20,10 @@ def get_query_gen(benchmark: str):
         from dataset.gen_ceb.gen_ceb_query import gen_query_single_only
 
         gen_query_fn = functools.partial(gen_query_single_only, ceb_dir=CEB_DIR)
+    elif benchmark == "spatial":
+        from dataset.gen_spatial.gen_spatial_query import gen_query
+
+        gen_query_fn = gen_query
     else:
         raise ValueError(f"Unknown benchmark: {benchmark}")
 
@@ -82,6 +86,15 @@ def get_placeholders_fn(benchmark: str, cache_dir: Optional[Path] = None):
             return placeholders
 
         gen_fn = gen_placeholder_ceb
+
+    elif benchmark == "spatial":
+        from dataset.gen_spatial.gen_spatial_query import gen_query
+
+        def gen_placeholder_spatial(**kwargs):
+            # we only need the placeholders dict
+            return gen_query(**kwargs)[2]
+
+        gen_fn = gen_placeholder_spatial
 
     else:
         raise ValueError(f"Unknown benchmark: {benchmark}")

@@ -32,6 +32,10 @@ tables_lists = {
         "role_type",
         "title",
     ],
+    "spatial": [
+        "points",
+        "regions",
+    ],
 }
 
 
@@ -46,6 +50,8 @@ def get_dataset_name(benchmark: str) -> str:
         return "tpch"
     elif benchmark == "ceb":
         return "imdb"
+    elif benchmark == "spatial":
+        return "spatial"
     else:
         raise ValueError(f"Unknown benchmark {benchmark}")
 
@@ -59,5 +65,9 @@ def get_benchmark_schema(benchmark: str) -> str:
         from dataset.gen_ceb.imdb_schema import imdb_schema
 
         return imdb_schema
+    elif benchmark == "spatial":
+        from dataset.gen_spatial.spatial_schema import spatial_schema
+
+        return spatial_schema
     else:
         raise ValueError(f"Unknown benchmark {benchmark}")
