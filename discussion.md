@@ -119,3 +119,54 @@ candidate patches, applies each on an isolated branch or snapshot, runs the same
 compile/validation/benchmark suite, and keeps the best correct variant. That
 would cost more compute and orchestration, but it could explore the optimization
 space more effectively than a single incremental patch path.
+
+# More In-Memory Data Encoding Options
+
+The generated engine can also improve by choosing better in-memory encodings for
+the workload, not only by changing query algorithms. The current patch loop can
+modify `builder_impl.*` and `query_impl.*`, so it can introduce specialized data
+structures during the build phase and then exploit them during query execution.
+
+Useful encoding options include:
+
+- columnar arrays, storing each hot attribute in a separate contiguous vector for
+  scan-heavy queries and SIMD-friendly predicates;
+- row-oriented or struct-packed records, when queries repeatedly need the same
+  group of attributes together;
+- dictionary encoding for low-cardinality strings, replacing string comparison
+  with integer comparison;
+- string interning, where repeated strings are stored once and referenced by ids
+  or pointers;
+- bit-packed integer columns, especially for small domains such as status flags,
+  years, months, region ids, or enum-like values;
+- null bitmaps, separating null checks from value storage so the hot value path
+  stays compact;
+- selection bitmaps or precomputed predicate masks for filters that appear often
+  in the fixed workload;
+- sorted projections, storing a second copy of selected columns ordered by a
+  frequent range predicate, join key, or `ORDER BY` key;
+- zone maps or min/max blocks, allowing range predicates to skip blocks without
+  scanning every row;
+- hash indexes for repeated equality joins or lookup-heavy predicates;
+- grouped aggregate tables, materializing common `GROUP BY` keys during build
+  when the workload repeatedly asks for the same grouping;
+- join-specific adjacency lists or foreign-key indexes, replacing repeated join
+  discovery with direct iteration over matching row ids;
+- compressed sparse representations for optional or rarely populated columns;
+- late-materialization layouts, where query execution filters row ids first and
+  only loads expensive payload columns after selectivity is known.
+
+The best encoding is workload-dependent. A query dominated by range filters may
+benefit from sorted projections and zone maps. A query dominated by string
+filters may benefit from dictionaries and precomputed id sets. A query dominated
+by joins may benefit more from hash indexes or adjacency lists. A fixed workload
+can also justify redundant representations: the generated engine can keep both a
+scan-friendly column layout and a join-friendly index if the build-time and
+memory costs are worthwhile.
+
+This is another place where a more guided, measured platform could work better
+than a single patch trajectory. The system could ask for several candidate
+in-memory encodings, build each one in an isolated snapshot, validate them
+against DuckDB, measure build time, memory footprint, and query runtime, and then
+keep the fastest correct representation. That would turn storage-layout choice
+into an empirical search problem instead of relying on one generated design.
