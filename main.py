@@ -58,12 +58,24 @@ from utils.weave_cache import configure_weave_cache_dirs
 logger = logging.getLogger(__name__)
 
 
+def _unique_scale_factors(scale_factors: list[float]) -> list[float]:
+    unique: list[float] = []
+    for scale_factor in scale_factors:
+        if scale_factor not in unique:
+            unique.append(scale_factor)
+    return unique
+
+
 async def main(args: argparse.Namespace) -> None:
     workspace_path = Path("./output")
     workspace_path.mkdir(exist_ok=True)
 
     cache_path = Path(args.artifacts_dir) / "cache"
-    cache_repo = None if args.disable_repo_sync else "git://c01/bespoke_cache.git"
+    cache_repo = None if args.disable_repo_sync else os.environ.get(
+        "BESPOKE_CACHE_REPO",
+        "git@github.com:DMLAB3/bespoke_cache.git",
+    )
+
 
     conversations_dir = Path(args.artifacts_dir) / "conversations"
 
@@ -83,9 +95,18 @@ async def main(args: argparse.Namespace) -> None:
         working_dir=workspace_path,
         extra_gitignore=extra_gitignore,
     )
-    assert not snapshotter.is_dirty(), (
-        f'Please remove all uncommitted changes in "{workspace_path}". We expect a clean working directory to ensure reproducibility.'
-    )
+    if snapshotter.is_dirty():
+        if args.continue_run:
+            logger.warning(
+                f'Continuing with uncommitted changes in "{workspace_path}".'
+            )
+        else:
+            logger.warning(
+                f'Cleaning uncommitted changes in "{workspace_path}" before starting a reproducible run.'
+            )
+            if snapshotter.has_head():
+                snapshotter.reset_changes()
+            snapshotter.clear_untracked(include_ignored=True)
 
     ##############################
     # Prepare workspace / snapshot
@@ -168,11 +189,9 @@ async def main(args: argparse.Namespace) -> None:
 
     parquet_path = args.artifacts_dir + f"/{get_dataset_name(args.benchmark)}_parquet/"
 
-    max_scale_factor = (
-        args.max_scale_factor if hasattr(args, "max_scale_factor") else 20
-    )
-
-    assert max_scale_factor is not None, "max_scale_factor must be set and not None."
+    max_scale_factor = getattr(args, "max_scale_factor", None)
+    if max_scale_factor is None:
+        max_scale_factor = 1
 
     # Create hooks instance for tracking metrics
     wandb_metrics_hook: WandbRunHook | None = None
@@ -184,7 +203,7 @@ async def main(args: argparse.Namespace) -> None:
         )
 
     # assemble default sf values for the selected benchmark
-    verify_sf_list, max_scale_factor = gen_sf(args.benchmark)
+    verify_sf_list, _ = gen_sf(args.benchmark)
 
     compile_cache_dir = cache_path / "compile"
     query_validator: QueryValidator | None = None
@@ -192,7 +211,7 @@ async def main(args: argparse.Namespace) -> None:
         query_validator = QueryValidator(
             benchmark=args.benchmark,
             gen_query_fn=gen_query_fn,
-            sf_list=verify_sf_list + [max_scale_factor],
+            sf_list=_unique_scale_factors(verify_sf_list + [max_scale_factor]),
             parquet_path=parquet_path,
             wandb_pin_worker=True,
             all_query_ids=query_list,
@@ -214,29 +233,34 @@ async def main(args: argparse.Namespace) -> None:
         wandb_metrics_hook=wandb_metrics_hook,
     )
 
-    run_tool_wrapper, run_tool = make_run_tool(
-        cwd=workspace_path,
-        query_validator=query_validator,
-        wandb_metrics_hook=wandb_metrics_hook,
-        compile_cache_dir=compile_cache_dir,
-        git_snapshotter=snapshotter,
-        dataset_name=get_dataset_name(args.benchmark),
-        base_parquet_dir=args.base_parquet_dir,
-        run_tool_offer_trace_option=args.run_tool_offer_trace_option,
-        only_from_cache=args.only_from_cache,
-    )
-
     tools = [
         ApplyPatchTool(editor=editor),
         ShellTool(executor=shell),
-        make_compile_tool(
+    ]
+
+    if query_validator is not None:
+        run_tool_wrapper, run_tool = make_run_tool(
             cwd=workspace_path,
+            query_validator=query_validator,
+            wandb_metrics_hook=wandb_metrics_hook,
             compile_cache_dir=compile_cache_dir,
             git_snapshotter=snapshotter,
-            wandb_metrics_hook=wandb_metrics_hook,
-        ),
-        run_tool_wrapper,
-    ]
+            dataset_name=get_dataset_name(args.benchmark),
+            base_parquet_dir=args.base_parquet_dir,
+            run_tool_offer_trace_option=args.run_tool_offer_trace_option,
+            only_from_cache=args.only_from_cache,
+        )
+        tools.extend(
+            [
+                make_compile_tool(
+                    cwd=workspace_path,
+                    compile_cache_dir=compile_cache_dir,
+                    git_snapshotter=snapshotter,
+                    wandb_metrics_hook=wandb_metrics_hook,
+                ),
+                run_tool_wrapper,
+            ]
+        )
 
     #########################
     # Prepare Model and Agent
@@ -324,18 +348,28 @@ async def main(args: argparse.Namespace) -> None:
         "When modifying an existing file, include the file contents between ",
         "<BEGIN_FILES> and <END_FILES> in your prompt. ",
         "You can run shell commands using the shell tool. Do not emit argv form. ",
-        "You can compile the code using the compile tool. ",
-        "You can run a list of queries using the run tool. The run tool automatically compiles the code. You can specify the queries to run and the scale factors to use. If no queries are specified, all queries will be run.",
     ]
+    if query_validator is not None:
+        instructions.extend(
+            [
+                "You can compile the code using the compile tool. ",
+                "You can run a list of queries using the run tool. The run tool automatically compiles the code. You can specify the queries to run and the scale factors to use. If no queries are specified, all queries will be run.",
+            ]
+        )
     if use_litellm:
         instructions = [
             f"You can edit files inside {workspace_path} using the apply_patch tool. ",
             "When modifying an existing file, include the file contents between ",
             "<BEGIN_FILES> and <END_FILES> in your prompt. ",
             "You can run shell commands using the shell tool. Do not emit argv form. ",
-            "You can compile the code using the compile tool. ",
-            "You can run a list of queries using the run tool. The run tool automatically compiles the code. You can specify the queries to run and the scale factors to use. If no queries are specified, all queries will be run.",
         ]
+        if query_validator is not None:
+            instructions.extend(
+                [
+                    "You can compile the code using the compile tool. ",
+                    "You can run a list of queries using the run tool. The run tool automatically compiles the code. You can specify the queries to run and the scale factors to use. If no queries are specified, all queries will be run.",
+                ]
+            )
 
     model_settings = ModelSettings(tool_choice="auto")
     if use_litellm:

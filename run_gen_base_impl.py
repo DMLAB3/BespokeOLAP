@@ -48,7 +48,9 @@ def main(args):
     verify_sf_list, max_scale_factor = gen_sf(benchmark)
 
     if with_storage_plan:
-        if benchmark == "tpch":
+        if args.storage_plan_snapshot is not None:
+            from_storage_plan_snapshot = args.storage_plan_snapshot
+        elif benchmark == "tpch":
             from_storage_plan_snapshot = (
                 "nhpul25g"  # previous storage plan run for tpch (wandb-id)
             )
@@ -59,7 +61,7 @@ def main(args):
         elif benchmark == "spatial":
             raise ValueError(
                 "No default storage-plan run is configured for benchmark 'spatial' yet. "
-                "Run without --with_storage_plan or add a spatial wandb run-id in run_gen_base_impl.py."
+                "Run without --with_storage_plan or pass --storage_plan_snapshot <snapshot-or-wandb-run-id>."
             )
         else:
             raise ValueError(f"Unknown benchmark {benchmark}")
@@ -68,12 +70,13 @@ def main(args):
 
     if from_storage_plan_snapshot is not None:
         storage_plan_snapshot = from_storage_plan_snapshot
-        statistics, _ = wandb_retrieve_metrics_for_run(
-            benchmark,
-            storage_plan_snapshot,
-        )
+        if len(storage_plan_snapshot) == 8:
+            statistics, _ = wandb_retrieve_metrics_for_run(
+                benchmark,
+                storage_plan_snapshot,
+            )
 
-        storage_plan_snapshot = statistics["last_commit_hash"]  # type: ignore
+            storage_plan_snapshot = statistics["last_commit_hash"]  # type: ignore
     else:
         storage_plan_snapshot = None
 
@@ -147,7 +150,7 @@ def create_conversation(
         example_query_params = "42a"
     elif benchmark == "spatial":
         example_query = "Q2"
-        example_query_params = "2 ST_Point(-122.42, 37.77) 250.0 100"
+        example_query_params = "2"
     else:
         raise ValueError(f"Unknown benchmark {benchmark}")
 
@@ -327,6 +330,7 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
         include_auto_finish=True,
         include_replay=True,
         include_only_from_llm_cache=True,
+        include_storage_plan_snapshot=True,
     )
     return parser
 

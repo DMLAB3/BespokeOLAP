@@ -53,8 +53,8 @@ Command used:
 
 Current blocker:
 - Missing parquet data files:
-  - `/mnt/labstore/bespoke_olap/spatial_parquet/sf1/points.parquet`
-  - `/mnt/labstore/bespoke_olap/spatial_parquet/sf1/regions.parquet`
+  - `/home/mk/spatial_parquet/sf1/points.parquet`
+  - `/home/mk/spatial_parquet/sf1/regions.parquet`
 
 ## Next Immediate Step
-Prepare spatial parquet files under `/mnt/labstore/bespoke_olap/spatial_parquet/sf1/` and rerun the acceptance command to generate timing rows in `benchmark/spatialbench_golden.csv`.
+Prepare spatial parquet files under `/home/mk/spatial_parquet/sf1/` and rerun the acceptance command to generate timing rows in `benchmark/spatialbench_golden.csv`.

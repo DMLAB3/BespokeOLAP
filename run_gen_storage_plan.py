@@ -26,7 +26,7 @@ def main(args):
         query_ids = parse_query_ids(short_name, prefix, benchmark=benchmark)
         assert query_ids is not None, f"Failed to parse query ids from {short_name}"
 
-    max_scale_factor = 20
+    max_scale_factor = 0.01
     # =========================
 
     config = build_run_config(
@@ -37,6 +37,7 @@ def main(args):
         conv_mode="scripted",
         disable_repo_sync=args.disable_repo_sync,
         max_scale_factor=max_scale_factor,
+        disable_valtool=True,
         replay_cache=args.replay_cache,
         auto_u=args.auto_u,
         auto_finish=args.auto_finish,
@@ -64,12 +65,19 @@ def create_conversation(
 
     # parquet engine
     queries_path = "queries.txt"
+    spatial_hint = ""
+    if benchmark == "spatial":
+        spatial_hint = """
+SpatialBench geometry columns are stored as parquet binary/WKB payloads and decoded with `ST_GeomFromWKB` in the queries. For spatial tables, consider geometry-aware layouts such as bounding boxes, centroid arrays, compact WKB payload storage, zone/building spatial partitions, and candidate-pruning indexes, while still preserving enough data to reconstruct the original parquet rows.
+"""
+
     prompt_list.append(
         f"""Your task is to analyze the workload and produce a creative in-memory storage-layout summary for the tables accessed by the query. You have the flexibility to return detailed, free-form text that explores not only conventional storage-layout recommendations but also unconventional, novel, and even 'crazy' storage designs. 
 You are encouraged to include additional ideas, new partitioning strategies, speculative encoding techniques, or experimental ways of grouping and organizing columns or data. 
 For each accessed table, feel free to be inventive and elaborate on possibilities such as hybrid layouts, speculative SoA/AoS (Array of Structures/Structure of Arrays) approaches, novel column encodings, or adaptive partitioning.
 Use this as an opportunity to push beyond current norms and propose storage techniques that might be futuristic or outlandish. 
 Output the storage layout for each table. Output only the final storage layout.
+{spatial_hint}
 
 Important:
 - store all the data, and store them in a way that it could be flattened back to the original data

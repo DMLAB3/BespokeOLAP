@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import argparse
 
-DEFAULT_MODEL = "gpt-5.2-codex"
-DEFAULT_ARTIFACTS_DIR = "/mnt/labstore/bespoke_olap/"
-DEFAULT_PARQUET_DIR = "/mnt/labstore/bespoke_olap/"
+DEFAULT_MODEL = "gpt-5.3-codex"
+DEFAULT_ARTIFACTS_DIR = "/home/mk/"
+DEFAULT_PARQUET_DIR = "/home/mk/"
 
 
 def build_run_config(

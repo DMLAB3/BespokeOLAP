@@ -105,11 +105,14 @@ class DuckDBConnectionManager:
                     "Install/load it manually (INSTALL spatial; LOAD spatial) or use a DuckDB build that includes it."
                 ) from exc
 
-        # Verify required functions used by current spatial query templates.
+        # Verify required functions used by the DuckDB SpatialBench templates.
         checks = [
-            "SELECT ST_AsText(ST_Point(0, 0))",
-            "SELECT ST_DWithin(ST_Point(0, 0), ST_Point(1, 1), 2)",
-            "SELECT ST_Contains(ST_GeomFromText('POLYGON((0 0,2 0,2 2,0 2,0 0))'), ST_Point(1, 1))",
+            "SELECT ST_AsText(ST_GeomFromText('POINT (0 0)'))",
+            "SELECT ST_DWithin(ST_GeomFromText('POINT (0 0)'), ST_GeomFromText('POINT (1 1)'), 2)",
+            "SELECT ST_Intersects(ST_GeomFromText('POINT (0 0)'), ST_GeomFromText('POINT (0 0)'))",
+            "SELECT ST_Within(ST_GeomFromText('POINT (1 1)'), ST_GeomFromText('POLYGON((0 0,2 0,2 2,0 2,0 0))'))",
+            "SELECT ST_Area(ST_GeomFromText('POLYGON((0 0,1 0,1 1,0 1,0 0))'))",
+            "SELECT ST_Length(ST_MakeLine(ST_GeomFromText('POINT (0 0)'), ST_GeomFromText('POINT (1 1)')))",
         ]
         for stmt in checks:
             try:
@@ -122,8 +125,25 @@ class DuckDBConnectionManager:
 
     def _validate_spatial_data_contract(self, con: duckdb.DuckDBPyConnection) -> None:
         required_cols = {
-            "points": {"point_id", "category", "geom"},
-            "regions": {"region_id", "region_name", "geom"},
+            "building": {"b_buildingkey", "b_name", "b_boundary"},
+            "customer": {"c_custkey", "c_name"},
+            "driver": {"d_driverkey"},
+            "trip": {
+                "t_tripkey",
+                "t_custkey",
+                "t_driverkey",
+                "t_vehiclekey",
+                "t_pickuptime",
+                "t_dropofftime",
+                "t_fare",
+                "t_tip",
+                "t_totalamount",
+                "t_distance",
+                "t_pickuploc",
+                "t_dropoffloc",
+            },
+            "vehicle": {"v_vehiclekey"},
+            "zone": {"z_zonekey", "z_name", "z_boundary"},
         }
         for table, expected_cols in required_cols.items():
             rows = con.execute(f"PRAGMA table_info('{table}')").fetchall()
@@ -138,6 +158,28 @@ class DuckDBConnectionManager:
                     "Spatial data contract violation for table "
                     f"'{table}'. Missing columns: {sorted(missing)}"
                 )
+
+        geometry_checks = {
+            "building": "b_boundary",
+            "trip": "t_pickuploc",
+            "zone": "z_boundary",
+        }
+        for table, column in geometry_checks.items():
+            try:
+                con.execute(
+                    f"""
+                    SELECT ST_AsText(ST_GeomFromWKB({column}))
+                    FROM {table}
+                    WHERE {column} IS NOT NULL
+                    LIMIT 1
+                    """
+                ).fetchall()
+            except Exception as exc:
+                raise RuntimeError(
+                    "Spatial data contract violation for table "
+                    f"'{table}'. Column '{column}' must be binary WKB decodable "
+                    "by DuckDB ST_GeomFromWKB."
+                ) from exc
 
     def clear_mem_footprint(self) -> None:
         if self.con is not None:

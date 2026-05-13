@@ -243,7 +243,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--datasets-path",
-        default="/mnt/labstore/bespoke_olap/imdb_parquet/",
+        default="/home/mk/imdb_parquet/",
         help="Base path containing sf* parquet directories and the source DuckDB.",
     )
     parser.add_argument(

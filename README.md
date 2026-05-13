@@ -94,7 +94,7 @@ WANDB_PROJECT=... # Optional, e.g. "bespoke-olap"
 
 ### 5. Prepare Parquet data
 
-Place TPC-H or CEB Parquet files in your artifacts directory (default: `/mnt/labstore/bespoke_olap/`). The path can be overridden with `--base_parquet_dir`.
+Place TPC-H or CEB Parquet files in your artifacts directory (default: `/home/mk/`). The path can be overridden with `--base_parquet_dir`.
 
 ## Usage
 
@@ -118,6 +118,12 @@ python run_gen_storage_plan.py \
     --conv storageplan1a-11bv1 \
     --benchmark ceb \
     --auto_u --auto_finish
+
+# Spatial
+uv run run_gen_storage_plan.py \
+    --conv storageplan1-12v1 \
+    --benchmark spatial \
+    --auto_u --auto_finish
 ```
 (Optional) `--auto_u` and `--auto_finish` flags can be used to automatically approve prompts and finish the conversation when no more prompts remain, enabling a fully automated run. Use with caution, as it will skip all user interactions.
 
@@ -135,8 +141,25 @@ python run_gen_base_impl.py \
     --conv basef1a-11bv1 \
     --benchmark ceb \
     --auto_u --auto_finish
+
+# Spatial
+python run_gen_base_impl.py \
+    --conv basef1-12v1 \
+    --benchmark spatial \
+    --auto_u --auto_finish
 ```
 Conv name represents: `basef{q_id}-{q_id}v{version}`. For example, `basef1-22v1` is a base implementation generated for TPC-H queries 1 and 22, version 1.
+
+To use a generated spatial storage plan, pass the snapshot or wandb run-id:
+
+```bash
+python run_gen_base_impl.py \
+    --conv basef1-12v1 \
+    --benchmark spatial \
+    --with_storage_plan \
+    --storage_plan_snapshot <snapshot-or-wandb-run-id> \
+    --auto_u --auto_finish
+```
 
 ### 4. Run the optimization loop
 To run the optimization loop, please specify the wandb run-id of the run producing the base implementation (see 3.).
@@ -186,7 +209,12 @@ python -m benchmark --systems bespoke,duckdb --snapshots <hash1,hash2,...> --sca
 Experimental spatial benchmark:
 
 ```bash
-python -m benchmark --systems duckdb --scale_factors 1,5 --benchmark spatial
+python -m dataset.gen_spatial.generate_spatial_data \
+  --scale-factor 0.001 \
+  --output-root /home/mk/spatial_parquet \
+  --compact \
+  --overwrite
+python -m benchmark --systems duckdb --scale_factors 0.001 --benchmark spatial
 ```
 
 See [Benchmarking guide](benchmark/README.md) for details and additional examples.
@@ -201,7 +229,7 @@ Common arguments shared across entry points:
 | `--benchmark`             | `tpch`               | Benchmark to use (`tpch`, `ceb`, or experimental `spatial`).                             |
 | `--conv` / `--conv_name`  | *(required)*         | Conversation name (auto-prefixed with benchmark name).                                   |
 | `--model`                 | `gpt-5.2-codex`      | LLM model ID to use.                                                                     |
-| `--artifacts_dir`         | `/mnt/labstore/...`  | Directory for caches, logs, conversations, and Parquet data.                             |
+| `--artifacts_dir`         | `/home/mk/...`  | Directory for caches, logs, conversations, and Parquet data.                             |
 | `--base_parquet_dir`      | *(artifacts_dir)*    | Base directory for Parquet files.                                                        |
 | `--replay`                | `False`              | Replay a prior run strictly from cache (fails on cache miss).                            |
 | `--replay_cache`          | `False`              | Reuse cached prompts; auto-advance until the first uncached LLM call.                   |
@@ -267,8 +295,9 @@ Spatial support is scaffolded to unblock spatial-query experiments while keeping
 
 - Query templates: `dataset/gen_spatial/spatial_queries.py`
 - Query instantiation: `dataset/gen_spatial/gen_spatial_query.py`
+- Data generation: `dataset/gen_spatial/generate_spatial_data.py` for local Python-generated data; official `spatialbench-cli` for full-fidelity benchmark data
 - Schema metadata: `dataset/gen_spatial/spatial_schema.py`
-- Benchmark query set: `benchmark/run.py` (`Q1`, `Q2`)
+- Benchmark query set: `benchmark/run.py` (`Q1` through `Q12`)
 
 Recommended optimization focus for spatial workloads:
 
@@ -280,7 +309,7 @@ Recommended optimization focus for spatial workloads:
 Current limitations:
 
 - No default spatial wandb baseline is configured for `run_optim_loop.py`.
-- No default spatial storage-plan run-id is configured for `run_gen_base_impl.py --with_storage_plan`.
+- No default spatial storage-plan run-id is configured for `run_gen_base_impl.py --with_storage_plan`; pass `--storage_plan_snapshot <snapshot-or-wandb-run-id>` after generating one.
 
 ## Development
 

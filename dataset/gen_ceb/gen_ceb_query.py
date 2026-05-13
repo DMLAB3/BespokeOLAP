@@ -534,5 +534,5 @@ def gen_query(
 
 if __name__ == "__main__":
     # Example usage
-    CEB_DIR = Path("/mnt/labstore/bespoke_olap/datasets/ceb/imdb")
+    CEB_DIR = Path("/home/mk/datasets/ceb/imdb")
     template, sqls, bindings = gen_query(CEB_DIR, query_name="Q1a", num_queries=100)

@@ -4,8 +4,8 @@
 
 ```bash
 python -m dataset.custom_scaler.scale_parquet \
-  --duckdb /mnt/labstore/bespoke_olap/imdb_parquet/imdb.duckdb \
-  --output-dir /mnt/labstore/bespoke_olap/imdb_parquet/sf2 \
+  --duckdb /home/mk/imdb_parquet/imdb.duckdb \
+  --output-dir /home/mk/imdb_parquet/sf2 \
   --scale 2
 ```
 
@@ -20,8 +20,8 @@ This will:
 
 ```bash
 python -m dataset.custom_scaler.scale_parquet \
-  --duckdb /mnt/labstore/bespoke_olap/imdb_parquet/imdb.duckdb \
-  --output-dir /mnt/labstore/bespoke_olap/imdb_parquet/ \
+  --duckdb /home/mk/imdb_parquet/imdb.duckdb \
+  --output-dir /home/mk/imdb_parquet/ \
   --scale 0.1
 ```
 
@@ -35,14 +35,14 @@ This will:
 ```bash
 # 25% downscale
 python -m dataset.custom_scaler.scale_parquet \
-  --duckdb /mnt/labstore/bespoke_olap/imdb_parquet/imdb.duckdb \
-  --output-dir /mnt/labstore/bespoke_olap/imdb_parquet/ \
+  --duckdb /home/mk/imdb_parquet/imdb.duckdb \
+  --output-dir /home/mk/imdb_parquet/ \
   --scale 0.25
 
 # 50% downscale
 python -m dataset.custom_scaler.scale_parquet \
-  --duckdb /mnt/labstore/bespoke_olap/imdb_parquet/imdb.duckdb \
-  --output-dir /mnt/labstore/bespoke_olap/imdb_parquet/ \
+  --duckdb /home/mk/imdb_parquet/imdb.duckdb \
+  --output-dir /home/mk/imdb_parquet/ \
   --scale 0.5
 ```
 
@@ -51,13 +51,13 @@ python -m dataset.custom_scaler.scale_parquet \
 ```bash
 # 3x upscale
 python -m dataset.custom_scaler.scale_parquet \
-  --duckdb /mnt/labstore/bespoke_olap/imdb_parquet/imdb.duckdb \
-  --output-dir /mnt/labstore/bespoke_olap/imdb_parquet/ \
+  --duckdb /home/mk/imdb_parquet/imdb.duckdb \
+  --output-dir /home/mk/imdb_parquet/ \
   --scale 3
 
 # 10x upscale
 python -m dataset.custom_scaler.scale_parquet \
-  --duckdb /mnt/labstore/bespoke_olap/imdb_parquet/imdb.duckdb \
-  --output-dir /mnt/labstore/bespoke_olap/imdb_parquet/ \
+  --duckdb /home/mk/imdb_parquet/imdb.duckdb \
+  --output-dir /home/mk/imdb_parquet/ \
   --scale 10
 ```

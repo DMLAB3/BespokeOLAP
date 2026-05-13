@@ -113,7 +113,7 @@ def _build_runners(
 
 
 def _validate_spatial_parquet_layout(parquet_path: Path, scale_factors: List[float]) -> None:
-    required_tables = ["points", "regions"]
+    required_tables = ["building", "customer", "driver", "trip", "vehicle", "zone"]
     missing_files: list[str] = []
 
     for sf in scale_factors:
@@ -127,7 +127,8 @@ def _validate_spatial_parquet_layout(parquet_path: Path, scale_factors: List[flo
         sample = "\n".join(missing_files[:10])
         raise FileNotFoundError(
             "Spatial benchmark requires prepared parquet inputs for tables "
-            "'points' and 'regions'. Missing files include:\n"
+            "'building', 'customer', 'driver', 'trip', 'vehicle', and 'zone'. "
+            "Missing files include:\n"
             f"{sample}"
         )
 
@@ -334,7 +335,7 @@ def get_all_query_ids(benchmark: str) -> List[str]:
             "11b",
         ]
     elif benchmark == "spatial":
-        query_ids = ["1", "2"]
+        query_ids = [str(i) for i in range(1, 13)]
     else:
         raise ValueError(f"Unknown benchmark: {benchmark}")
 

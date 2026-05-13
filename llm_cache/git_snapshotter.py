@@ -100,6 +100,12 @@ class GitSnapshotter:
         result = self._git_capture(["status", "--porcelain"], check=False)
         return bool(result.stdout.strip())
 
+    def has_head(self) -> bool:
+        """
+        Returns True if the repository has a HEAD commit.
+        """
+        return self._head_hash(allow_none=True) is not None
+
     def clear_untracked(self, include_ignored: bool = False) -> None:
         """
         Delete files/dirs that are not tracked by git in this repo.
@@ -256,8 +262,7 @@ class GitSnapshotter:
         if path.exists():
             resolved = path.resolve().as_uri()
         else:
-            parsed = urlparse(root_repo)
-            if parsed.scheme:
+            if self._is_git_remote_url(root_repo):
                 resolved = root_repo
             elif self._remote_exists(root_repo):
                 return root_repo
@@ -273,6 +278,19 @@ class GitSnapshotter:
             self._git(["remote", "add", remote_name, resolved])
 
         return remote_name
+
+    @staticmethod
+    def _is_git_remote_url(value: str) -> bool:
+        parsed = urlparse(value)
+        if parsed.scheme:
+            return True
+
+        # Git accepts SCP-like SSH remotes such as:
+        #   git@github.com:DMLAB3/bespoke_cache.git
+        #   github.com:DMLAB3/bespoke_cache.git
+        # urllib.parse treats these as scheme-less paths, so handle them
+        # explicitly before falling back to named remote lookup.
+        return re.fullmatch(r"([A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+:.+", value) is not None
 
     def _remote_exists(self, name: str) -> bool:
         r = self._git_quiet(["remote", "get-url", name], check=False)

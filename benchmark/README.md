@@ -23,7 +23,12 @@ python -m benchmark --systems duckdb --scale_factors 1,5,20 --benchmark tpch
 Run experimental spatial benchmark (DuckDB only):
 
 ```bash
-python -m benchmark --systems duckdb --scale_factors 1,5 --benchmark spatial
+python -m dataset.gen_spatial.generate_spatial_data \
+  --scale-factor 0.001 \
+  --output-root /home/mk/spatial_parquet \
+  --compact \
+  --overwrite
+python -m benchmark --systems duckdb --scale_factors 0.001 --benchmark spatial
 ```
 
 Run with fixed seed for exact placeholder reproducibility:
@@ -42,5 +47,7 @@ python -m benchmark --systems bespoke,duckdb --snapshots <hash> --scale_factors 
 
 - `--snapshots` is required only when `bespoke` is included in `--systems`.
 - Query IDs are resolved from benchmark definitions (`tpch`, `ceb`, or `spatial`), not from snapshot files.
-- Spatial benchmark currently uses two template queries (`Q1`, `Q2`) from `dataset/gen_spatial/spatial_queries.py`.
+- Spatial benchmark uses the 12 DuckDB SQL templates adapted from Apache Sedona SpatialBench in `dataset/gen_spatial/spatial_queries.py`.
+- Spatial geometry columns are generated as parquet binary/WKB and decoded in SQL with `ST_GeomFromWKB`.
+- `dataset.gen_spatial.generate_spatial_data` can generate local Python data. Use `--compact` for smoke tests; omit it to follow published table cardinalities. Use Apache SpatialBench `spatialbench-cli` for full-fidelity geometry distributions.
 - Spatial contract (query/data/metrics): `benchmark/SPATIALBENCH_CONTRACT.md`.

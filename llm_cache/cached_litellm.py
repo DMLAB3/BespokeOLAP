@@ -161,12 +161,6 @@ class CachedLitellmModel(LitellmModel):
             cached = utils.load_pickle(path, CacheType)
             if cached is not None:
                 resp = cached.response
-                self._ensure_usage_entries(resp.usage)
-                cost = get_tokens_context_and_dollar_info(
-                    resp.usage, self.model, last_entry_only=True, log=False
-                )["cost"]
-                logger.debug(f"Saved: ${cost:0.6f}")
-                self.total_saved += cost
 
                 assert self.snapshotter is not None
                 if cached.parent_hash:
@@ -175,19 +169,36 @@ class CachedLitellmModel(LitellmModel):
                         self.snapshotter.fetch_snapshots()
                     exists = self.snapshotter.has_snapshot(cached.parent_hash)
                     if not exists:
-                        raise Exception(
-                            f"Directory does not contain snapshot {cached.parent_hash}, but cache references it."
+                        msg = (
+                            f"LLM cache entry {path} references missing snapshot "
+                            f"{cached.parent_hash}; treating it as a cache miss."
                         )
-
-                    self.snapshotter.clear_untracked(include_ignored=True)
-                    self.snapshotter.reset_changes()
-                    self.snapshotter.restore(cached.parent_hash)
+                        if self.stop_on_cache_miss:
+                            raise Exception(
+                                "Stop on cache miss. "
+                                "The cached response exists, but its snapshot is missing: "
+                                f"{cached.parent_hash}"
+                            )
+                        logger.warning(msg)
+                        cached = None
+                    else:
+                        self.snapshotter.clear_untracked(include_ignored=True)
+                        self.snapshotter.reset_changes()
+                        self.snapshotter.restore(cached.parent_hash)
                 else:
                     if self.snapshotter.is_dirty():
                         raise Exception("No parent hash and directory is dirty")
 
-                self.llm_was_cached = True
-                return resp
+                if cached is not None:
+                    self._ensure_usage_entries(resp.usage)
+                    cost = get_tokens_context_and_dollar_info(
+                        resp.usage, self.model, last_entry_only=True, log=False
+                    )["cost"]
+                    logger.debug(f"Saved: ${cost:0.6f}")
+                    self.total_saved += cost
+
+                    self.llm_was_cached = True
+                    return resp
 
         if self.stop_on_cache_miss:
             raise Exception("Stop on cache miss. Did not found in cache: " + str(path))

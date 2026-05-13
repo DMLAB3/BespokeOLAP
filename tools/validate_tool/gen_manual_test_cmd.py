@@ -12,7 +12,7 @@ if __name__ == "__main__":
     queries = [1, 2, 3]
     num_samples = 10
 
-    artifacts_dir = "/mnt/labstore/bespoke_olap/"
+    artifacts_dir = "/home/mk/"
     cache_path = Path(artifacts_dir) / "cache/validate_tool"
 
     query_cache = QueryCache(

@@ -12,7 +12,7 @@ from dataset.gen_ceb.gen_ceb_query import _move_is_null_to_in_clause
 class TestGenCEBQuery(unittest.TestCase):
     """Test suite for CEB query generation"""
 
-    CEB_DIR = Path("/mnt/labstore/bespoke_olap/datasets/ceb/imdb")
+    CEB_DIR = Path("/home/mk/datasets/ceb/imdb")
 
     #     def _test_query_generation(self, query_name: str, num_queries: int = 1):
     #         """Helper method to test query generation for a specific query name"""

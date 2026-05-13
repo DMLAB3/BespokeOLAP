@@ -7,7 +7,7 @@ from llm_cache import utils
 
 logger = logging.getLogger(__name__)
 
-CEB_DIR = Path("/mnt/labstore/bespoke_olap/datasets/ceb/imdb")
+CEB_DIR = Path("/home/mk/datasets/ceb/imdb")
 
 
 def get_query_gen(benchmark: str):

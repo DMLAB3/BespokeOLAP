@@ -1,75 +1,83 @@
 # SpatialBench Contract (V1)
 
 ## Scope
-SpatialBench V1 focuses on two deterministic query families:
-- Q1: Point-in-polygon aggregation by region id.
-- Q2: Radius search with distance ordering and top-k limit.
+SpatialBench V1 adapts the 12 fixed SQL queries from Apache Sedona SpatialBench
+for DuckDB. The workload covers point radius search, zone containment,
+bounding-box filtering, spatial joins, route-distance analysis, building
+proximity, overlap/conflation, and nearest-building lookup.
 
 This contract defines query behavior, placeholders, data schema assumptions, and validation rules.
 
 ## Query Contract
 
-### Q1: Region Containment Count
-Intent:
-- Count points contained in one selected region polygon.
-
-Template semantics:
-- Join points to regions through `ST_Contains(r.geom, p.geom)`.
-- Restrict to one region id using placeholder `REGION_ID`.
-- Output one row per matched region id.
-
-Placeholders:
-- `REGION_ID`: integer in [1, 32].
-
-Output schema:
-- `region_id` (integer)
-- `point_count` (integer)
-
-Determinism:
-- Placeholder generation is seeded.
-- Output ordering is deterministic due to grouped single key filter.
-
-### Q2: Radius Search
-Intent:
-- Find nearest points to a query point within radius.
-
-Template semantics:
-- Filter with `ST_DWithin(p.geom, QUERY_POINT, RADIUS)`.
-- Project distance `ST_Distance(p.geom, QUERY_POINT)`.
-- Order by distance ascending.
-- Return first `LIMIT_N` rows.
+### Queries
+- Q1: trips starting within 50km of Sedona city center.
+- Q2: trips starting within Coconino County.
+- Q3: monthly trip statistics near Sedona.
+- Q4: zone distribution for top-tip trips.
+- Q5: repeat-customer monthly dropoff convex hulls.
+- Q6: zone statistics for trips intersecting a bounding box.
+- Q7: reported route distance vs. geometric line distance.
+- Q8: nearby pickups per building.
+- Q9: building overlap/conflation by IoU.
+- Q10: zone statistics for trip pickups.
+- Q11: cross-zone trip count.
+- Q12: five nearest buildings to each trip pickup using DuckDB lateral join.
 
 Placeholders:
-- `QUERY_POINT`: SQL expression `ST_Point(<lon>, <lat>)`.
-- `RADIUS`: float in [50.0, 1500.0].
-- `LIMIT_N`: integer in [10, 200].
-
-Output schema:
-- `point_id` (integer)
-- `category` (string)
-- `dist` (float)
+- None. Upstream SpatialBench defines fixed benchmark statements.
 
 Determinism:
-- Placeholder generation is seeded.
-- Ties in distance should be considered implementation-defined unless explicitly secondary-sorted.
+- Queries include deterministic `ORDER BY` clauses where row ordering matters.
+- Seeds are still accepted by local generator APIs for compatibility but do not
+  change SQL text.
 
 ## Data Contract
-Expected tables in parquet under `.../sf<SCALE_FACTOR>/`:
+Expected tables in parquet under `.../sf<SCALE_FACTOR>/`. Real benchmark data
+should be generated with Apache SpatialBench `spatialbench-cli`:
 
-### points
-- `point_id` BIGINT
-- `category` VARCHAR
-- `geom` GEOMETRY(POINT)
+```bash
+spatialbench-cli --scale-factor 1 --format=parquet --output-dir .../spatial_parquet/sf1
+```
 
-### regions
-- `region_id` INTEGER
-- `region_name` VARCHAR
-- `geom` GEOMETRY(POLYGON)
+### trip
+- `t_tripkey`, `t_custkey`, `t_driverkey`, `t_vehiclekey`
+- `t_pickuptime`, `t_dropofftime`
+- `t_fare`, `t_tip`, `t_totalamount`, `t_distance`
+- `t_pickuploc`, `t_dropoffloc` as WKB point payloads
+
+### customer
+- `c_custkey`, `c_name`
+
+### driver
+- `d_driverkey`
+- Note: SpatialBench docs list driver abbreviation as `s_`, while the upstream
+  parquet schema emits `d_` driver columns.
+
+### vehicle
+- `v_vehiclekey`
+
+### zone
+- `z_zonekey`, `z_name`, `z_boundary` as WKB polygon/multipolygon payload
+
+### building
+- `b_buildingkey`, `b_name`, `b_boundary` as WKB polygon payload
+
+### Cardinality
+- `trip`: `6M x SF`
+- `customer`: `30K x SF`
+- `driver`: `500 x SF`
+- `vehicle`: `100 x SF`
+- `building`: `20K x (1 + log2(SF))`
+- `zone`: tiered by SF (`156,095` below SF10, then `455,711`,
+  `1,035,371`, and `1,035,749` for the larger documented tiers)
 
 Required runtime checks:
 - Spatial extension loaded in DuckDB.
-- Required functions available: `ST_Point`, `ST_DWithin`, `ST_Contains`.
+- Required functions available for the adapted query set, including `ST_GeomFromWKB`, `ST_GeomFromText`, `ST_DWithin`, `ST_Intersects`, `ST_Within`, `ST_Distance`, `ST_Area`, `ST_Intersection`, `ST_MakeLine`, and `ST_Length`.
 - Required tables/columns exist.
+- Geometry payload columns remain parquet binary/WKB and must decode through
+  `ST_GeomFromWKB`.
 
 ## Metric Contract
 For each measured query execution, CSV row must include:

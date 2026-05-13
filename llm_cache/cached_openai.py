@@ -195,16 +195,7 @@ class CachedOpenAIResponsesModel(OpenAIResponsesModel):
         if path.exists():
             cached = utils.load_pickle(path, CacheType)
             if cached is not None:
-                # logger.info(f'Found in cache: {path}')
                 resp = cached.response
-                assert resp.usage is not None
-                cost = get_tokens_context_and_dollar_info(
-                    resp.usage, self.model, last_entry_only=True, log=False
-                )["cost"]
-                logger.debug(f"Saved: ${cost:0.6f}")
-                self.total_saved += cost
-
-                assert resp.usage is not None
 
                 # snapshotter restore state
                 assert self.snapshotter is not None
@@ -214,33 +205,52 @@ class CachedOpenAIResponsesModel(OpenAIResponsesModel):
                         self.snapshotter.fetch_snapshots()
                     exists = self.snapshotter.has_snapshot(cached.parent_hash)
                     if not exists:
-                        raise Exception(
-                            f"Directory does not contain snapshot {cached.parent_hash}, but cache references it."
+                        msg = (
+                            f"LLM cache entry {path} references missing snapshot "
+                            f"{cached.parent_hash}; treating it as a cache miss."
                         )
-                    # Disable this path because commands with runtimes won't produce exact reproducible snapshots
-                    # valid = self.snapshotter.matches_snapshot(cached.parent_hash)
-                    # if not valid:
-                    #    print(path)
-                    #    rollback = utils.ask_yes_no(
-                    #        f"Rollback to previous snapshot {cached.parent_hash}?",
-                    #        default=True,
-                    #    )
-                    #    if not rollback:
-                    #        raise Exception(
-                    #            f"Directory does not match parent_hash {cached.parent_hash}"
-                    #        )
+                        if self.stop_on_cache_miss:
+                            raise Exception(
+                                "Stop on cache miss. "
+                                "The cached response exists, but its snapshot is missing: "
+                                f"{cached.parent_hash}"
+                            )
+                        logger.warning(msg)
+                        cached = None
+                    else:
+                        # Disable this path because commands with runtimes won't produce exact reproducible snapshots
+                        # valid = self.snapshotter.matches_snapshot(cached.parent_hash)
+                        # if not valid:
+                        #    print(path)
+                        #    rollback = utils.ask_yes_no(
+                        #        f"Rollback to previous snapshot {cached.parent_hash}?",
+                        #        default=True,
+                        #    )
+                        #    if not rollback:
+                        #        raise Exception(
+                        #            f"Directory does not match parent_hash {cached.parent_hash}"
+                        #        )
 
-                    self.snapshotter.clear_untracked(include_ignored=True)
-                    self.snapshotter.reset_changes()
-                    self.snapshotter.restore(cached.parent_hash)
-                    # For backwards compatibility
-                    # self.snapshotter.merge_commit_into_trunk(cached.parent_hash)
+                        self.snapshotter.clear_untracked(include_ignored=True)
+                        self.snapshotter.reset_changes()
+                        self.snapshotter.restore(cached.parent_hash)
+                        # For backwards compatibility
+                        # self.snapshotter.merge_commit_into_trunk(cached.parent_hash)
                 else:
                     if self.snapshotter.is_dirty():
                         raise Exception("No parent hash and directory is dirty")
 
-                self.llm_was_cached = True
-                return resp
+                if cached is not None:
+                    assert resp.usage is not None
+                    cost = get_tokens_context_and_dollar_info(
+                        resp.usage, self.model, last_entry_only=True, log=False
+                    )["cost"]
+                    logger.debug(f"Saved: ${cost:0.6f}")
+                    self.total_saved += cost
+
+                    assert resp.usage is not None
+                    self.llm_was_cached = True
+                    return resp
 
         if self.stop_on_cache_miss:
             raise Exception("Stop on cache miss. Did not found in cache: " + str(path))

@@ -33,8 +33,12 @@ tables_lists = {
         "title",
     ],
     "spatial": [
-        "points",
-        "regions",
+        "building",
+        "customer",
+        "driver",
+        "trip",
+        "vehicle",
+        "zone",
     ],
 }
 
