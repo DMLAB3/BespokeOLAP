@@ -23,7 +23,7 @@ class DuckDBRunner:
         query_list: list[str],
         sql_list: list[str],
         args_list: list[str],
-        snapshot: str,
+        workspace_id: str,
     ) -> list[float | None]:
         if not query_ids_needed:
             return [None] * len(query_list)

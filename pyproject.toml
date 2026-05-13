@@ -4,6 +4,7 @@ version = "0.2.4"
 description = "Synthesizing Workload-Specific One-size-fits-one Database Engines."
 requires-python = ">=3.10"
 dependencies = [
+    "dspy>=3.1,<3.2",
     "duckdb>=1.4.3",
     "ipykernel>=7.1.0",
     "ipywidgets>=8.1.8",

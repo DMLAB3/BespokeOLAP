@@ -87,7 +87,7 @@ uv sync
 Create a `.env` file with your API keys:
 
 ```bash
-OPENAI_API_KEY=...
+GEMINI_API_KEY=...
 WANDB_ENTITY=... # Optional, e.g. "my-team"
 WANDB_PROJECT=... # Optional, e.g. "bespoke-olap"
 ```
@@ -150,22 +150,22 @@ python run_gen_base_impl.py \
 ```
 Conv name represents: `basef{q_id}-{q_id}v{version}`. For example, `basef1-22v1` is a base implementation generated for TPC-H queries 1 and 22, version 1.
 
-To use a generated spatial storage plan, pass the snapshot or wandb run-id:
+Git snapshot handoff for storage plans is disabled in the DSPy runtime. To use a
+generated storage plan for base implementation work, keep `storage_plan.txt` in
+`./output/` and run manual/continue mode so the current workspace is preserved.
 
 ```bash
-python run_gen_base_impl.py \
-    --conv basef1-12v1 \
+python main.py manual \
+    --conv_name spatial_base_with_storage \
+    --query_list 1,2 \
     --benchmark spatial \
-    --with_storage_plan \
-    --storage_plan_snapshot <snapshot-or-wandb-run-id> \
-    --auto_u --auto_finish
+    --continue_run
 ```
 
 ### 4. Run the optimization loop
-To run the optimization loop, please specify the wandb run-id of the run producing the base implementation (see 3.).
-The script will automatically look up the final snapshot created at the end of that conversation and load this git snapshot automatically.
-I.e. any past run can be loaded as a starting point for the optimization loop, as long as the final snapshot of that run is available in the git cache. This allows you to easily continue and optimize from any past run, or even share runs across machines by sharing the git snapshot cache (see "Remote snapshot cache" below).
-Store the wandb run-id in the `run_optim_loop.py` header. 
+The optimization loop now starts from the current `./output/` workspace. Generate
+or place a baseline implementation there first; `run_optim_loop.py` no longer
+looks up a W&B run-id and restores a git snapshot.
 
 ```bash
 # TPC-H
@@ -185,7 +185,7 @@ python run_optim_loop.py \
 
 ### Hint: Conversation Names
 Conversation names are used to organize and track runs.
-They first create separate log-files but also identify traces, snapshots, and metrics in wandb.
+They first create separate log-files but also identify traces and metrics in wandb.
 Further they reference the queries for which an engine is generated and optimized, as well as the version number for the generated engine.
 Hence they have to be unique - this is also enforced by the system.
 Usually naming conventions (conversation name prefixes) are enforced by the scripts.
@@ -203,7 +203,7 @@ python main.py manual \
 ### Benchmark a generated engine
 
 ```bash
-python -m benchmark --systems bespoke,duckdb --snapshots <hash1,hash2,...> --scale_factors 1,5,20 --benchmark tpch
+python -m benchmark --systems bespoke,duckdb --scale_factors 1,5,20 --benchmark tpch
 ```
 
 Experimental spatial benchmark:
@@ -228,8 +228,8 @@ Common arguments shared across entry points:
 |---------------------------|----------------------|------------------------------------------------------------------------------------------|
 | `--benchmark`             | `tpch`               | Benchmark to use (`tpch`, `ceb`, or experimental `spatial`).                             |
 | `--conv` / `--conv_name`  | *(required)*         | Conversation name (auto-prefixed with benchmark name).                                   |
-| `--model`                 | `gpt-5.2-codex`      | LLM model ID to use.                                                                     |
-| `--artifacts_dir`         | `/home/mk/...`  | Directory for caches, logs, conversations, and Parquet data.                             |
+| `--model`                 | `gemini/gemini-3.1-flash-lite` | DSPy/LiteLLM model ID to use.                                                      |
+| `--artifacts_dir`         | `/home/mk/...`  | Directory for caches, conversations, and Parquet data. Local run logs are written under `./output/logs/`. |
 | `--base_parquet_dir`      | *(artifacts_dir)*    | Base directory for Parquet files.                                                        |
 | `--replay`                | `False`              | Replay a prior run strictly from cache (fails on cache miss).                            |
 | `--replay_cache`          | `False`              | Reuse cached prompts; auto-advance until the first uncached LLM call.                   |
@@ -237,22 +237,35 @@ Common arguments shared across entry points:
 | `--auto_finish`           | `False`              | Automatically finish when no more prompts remain in the conversation. Otherwise the user can continue prompting manually.                   |
 | `--notify`                | `False`              | Send a notification when the conversation requires user input.                           |
 | `--disable_wandb`         | `False`              | Skip wandb logging.                                                                      |
-| `--disable_repo_sync`     | `False`              | Skip pushing snapshots to the remote git cache.                                          |
 | `--disable_valtool`       | `False`              | Disable automatic validation after each compile+run.                                     |
-| `--start_snapshot`        | `None`               | Git snapshot hash to start from.                                                         |
-| `--storage_plan_snapshot` | `None`               | Git snapshot hash to load a storage plan from.                                           |
-| `--continue_run`          | `False`              | Continue from the current working-dir state instead of a clean snapshot.                 |
+| `--continue_run`          | `False`              | Continue from the current `./output` state instead of cleaning and copying a fresh template. |
+
+The agent runtime is DSPy-based and uses Gemini directly by default. You can
+override the model with any DSPy/LiteLLM model name:
+
+```bash
+GEMINI_API_KEY=... python run_gen_storage_plan.py \
+    --conv storageplan1-22v1 \
+    --benchmark tpch \
+    --model gemini/gemini-3.1-flash-lite \
+    --auto_u --auto_finish
+```
 
 ## Architecture
 
 ### Agent Loop (`main.py`)
 
-The core orchestrator. It drives a conversation using four tools:
+The core orchestrator. It drives a DSPy ReAct agent with four tools:
 
-- **`ApplyPatchTool`** — edits files in `./output/`
-- **`ShellTool`** — runs shell commands in `./output/`
-- **`compile_tool`** — compiles the C++ engine in `./output/build/`
-- **`run_tool`** — compiles, runs queries, and validates results against DuckDB
+- **`apply_patch`** — edits files in `./output/`
+- **`shell`** — runs shell commands in `./output/`
+- **`compile`** — compiles the C++ engine in `./output/build/`
+- **`run`** — compiles, runs queries, and validates results against DuckDB
+
+When W&B is enabled, the DSPy runtime also installs a native DSPy callback that
+logs module, LM, and tool start/end events to the active W&B run.
+Full local LLM request/response records are written as JSONL under
+`./output/logs/*_llm_calls.jsonl`.
 
 ### Conversation Modes (`conversations/`)
 
@@ -275,11 +288,10 @@ The template and host process for the generated OLAP engine. The agent generates
 Multi-layer caching for reproducibility:
 
 - **LLM cache** — hashes requests and stores/replays responses from disk
-- **Shell cache** — caches shell command outputs keyed by working-dir snapshot and command
-- **Compaction cache** — caches context compaction results
-- **`GitSnapshotter`** — manages a git repo inside `./output/` to snapshot and restore the working directory between agent turns. Named snapshots are stored as git refs (`refs/snapshots/*`).
+- **Shell cache** — caches shell command outputs when a snapshotter is available; disabled on the active no-snapshot DSPy runtime path
+- **DSPy session store** — persists compacted context summaries and recent turns
 
-To clear caches, delete the relevant subdirectories under `artifacts_dir/cache/` and `./output/.git`.
+To clear caches, delete the relevant subdirectories under `artifacts_dir/cache/`.
 
 ### Validation (`tools/validate_tool/`)
 
@@ -308,8 +320,8 @@ Recommended optimization focus for spatial workloads:
 
 Current limitations:
 
-- No default spatial wandb baseline is configured for `run_optim_loop.py`.
-- No default spatial storage-plan run-id is configured for `run_gen_base_impl.py --with_storage_plan`; pass `--storage_plan_snapshot <snapshot-or-wandb-run-id>` after generating one.
+- `run_optim_loop.py` requires a baseline implementation already present in `./output/`.
+- Git snapshot handoff is disabled in the DSPy runtime; `run_gen_base_impl.py --with_storage_plan`, `--start_snapshot`, and `--storage_plan_snapshot` are not supported.
 
 ## Development
 
@@ -333,21 +345,3 @@ CREATE TABLE orders   AS SELECT * FROM read_parquet('orders.parquet');
 CREATE TABLE lineitem AS SELECT * FROM read_parquet('lineitem.parquet');
 -- ... add other tables as needed
 ```
-
-### Remote snapshot cache (optional)
-
-To share snapshots across machines, set up a bare git repository and start a git daemon:
-
-```bash
-git init --bare bespoke_cache.git
-touch bespoke_cache.git/git-daemon-export-ok
-
-git daemon \
-    --base-path=./ \
-    --export-all \
-    --enable=receive-pack \
-    --reuseaddr \
-    --verbose
-```
-
-The cache URL is `git://<hostname>/bespoke_cache.git`. Pass it via the appropriate config option, or leave it unset to use only the local snapshot cache (with `--disable_repo_sync`).

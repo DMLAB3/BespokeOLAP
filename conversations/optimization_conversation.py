@@ -68,7 +68,7 @@ class OptimizationConversation(AbstractConversation):
         verify_sf_list: List[float],
         benchmark_sf: float,
         query_validator: QueryValidator,
-        git_snapshotter: GitSnapshotter,
+        git_snapshotter: GitSnapshotter | None,
         session: AdvancedSQLiteSession,
         wandb_run_hook: Optional[WandbRunHook],
         bespoke_storage: bool = True,
@@ -185,9 +185,13 @@ class OptimizationConversation(AbstractConversation):
     ) -> StageResult:
         """Execute one optimization stage and return its measured outcome."""
 
-        # extract current git snapshot
-        current_snapshot = self.git_snapshotter.current_hash
-        assert current_snapshot is not None, "Current git snapshot is None."
+        current_snapshot = None
+        if self.revert_on_regression:
+            assert self.git_snapshotter is not None, (
+                "revert_on_regression requires a GitSnapshotter."
+            )
+            current_snapshot = self.git_snapshotter.current_hash
+            assert current_snapshot is not None, "Current git snapshot is None."
 
         # run the LLM optimization loop
         await self._exec(
@@ -256,6 +260,8 @@ class OptimizationConversation(AbstractConversation):
             pass
         else:
             if self.revert_on_regression:
+                assert self.git_snapshotter is not None
+                assert current_snapshot is not None
                 # roll back to the state before this stage (discard changes from this stage)
                 logger.warning(
                     f"Reverting changes from stage '{stage.name}' for query {query_id} due to no improvement (revert to: {current_snapshot}). Turn: {self.wandb_run_hook.last_turn if self.wandb_run_hook else 'N/A'}"

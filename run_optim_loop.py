@@ -1,10 +1,10 @@
 import argparse
+from pathlib import Path
 
 from main import run_conv_wrapper
 from tools.validate_tool.sf_list_gen import gen_sf
 from utils.cli_config import add_common_args, build_run_config
 from utils.gen_common import parse_query_ids
-from utils.wandb_api_helper import wandb_retrieve_metrics_for_run
 
 ### RUN CMD
 # python run_optim_loop.py --conv brunoptim1-22v1 --bespoke_storage --benchmark tpch --notify --replay_cache --auto_u --auto_finish
@@ -36,29 +36,16 @@ def main(args):
     # assemble default sf values for the selected benchmark
     verify_sf_list, max_scale_factor = gen_sf(benchmark)
 
-    if benchmark == "tpch":
-        if bespoke_storage:
-            wandb_id = "a2tlnfrk"
-        else:
-            wandb_id = "ijvzlkif"
-    elif benchmark == "ceb":
-        if bespoke_storage:
-            wandb_id = "blqeh6i0"
-        else:
-            wandb_id = "fx7rshq2"
-    elif benchmark == "spatial":
-        raise ValueError(
-            "No default wandb baseline is configured for benchmark 'spatial'. "
-            "Please set a spatial wandb_id in run_optim_loop.py first."
-        )
-    else:
+    if benchmark not in {"tpch", "ceb", "spatial"}:
         raise ValueError(f"Unknown benchmark {benchmark}")
 
-    # lookup git snapshot from wandb
-    statistics, _ = wandb_retrieve_metrics_for_run(
-        benchmark, wandb_id, fetch_latest_runtimes=False
-    )
-    commit_hash = statistics["last_commit_hash"]
+    output_dir = Path("output")
+    if not (output_dir / "query_impl.cpp").exists():
+        raise ValueError(
+            "Git snapshots are disabled in the DSPy runtime. "
+            "run_optim_loop.py now optimizes the current ./output workspace; "
+            "generate or place the baseline implementation there first."
+        )
 
     config = build_run_config(
         benchmark=benchmark,
@@ -66,11 +53,9 @@ def main(args):
         conv_mode="optimization",  # delegate the optimization loop logic to the conversation instead of hardcoding it in the main function
         query_list=",".join(map(str, query_ids)),
         notify=args.notify,
-        disable_repo_sync=args.disable_repo_sync,
         max_scale_factor=max_scale_factor,
         replay_cache=args.replay_cache,
-        start_snapshot=commit_hash,
-        storage_plan_snapshot=None,
+        continue_run=True,
         keep_csv=True,  # keep .csv files around instead of git-ignoring them (maybe to backtrack correctness issues)
         disable_tracing=args.disable_tracing,
         disable_wandb=args.disable_wandb,
@@ -80,6 +65,7 @@ def main(args):
         run_tool_offer_trace_option=True,  # for optimization conversations, we want to offer the option to run with tracing compile flag enabled to collect more fine-grained performance data for the optimized plans
         only_from_llm_cache=args.only_from_llm_cache,
         only_from_cache=args.only_from_cache,
+        model=args.model,
     )
 
     # run conversation
@@ -98,15 +84,15 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
         "--bespoke_storage",
         action="store_true",
         default=False,
-        help="Whether to read the storage plan from a previous run",
+        help="Tag the optimization run as using bespoke storage in the current ./output workspace.",
     )
 
     add_common_args(
         parser,
         include_notify=True,
-        include_disable_repo_sync=True,
         include_replay_cache=True,
         include_benchmark=True,
+        include_model=True,
         include_disable_wandb=True,
         include_disable_tracing=True,
         include_auto_u=True,

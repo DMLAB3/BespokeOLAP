@@ -116,6 +116,9 @@ class GitSnapshotter:
         args = ["clean", "-fd"]
         if include_ignored:
             args.append("-x")  # remove ignored files too
+            # Runtime logs live under output/logs. They must survive snapshot
+            # cleanup/cache restore, and they should never affect snapshots.
+            args.extend(["-e", "logs/", "-e", "logs/**"])
         self._git(args)
 
     def reset_changes(self) -> None:

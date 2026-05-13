@@ -17,7 +17,6 @@ from benchmark.systems import (
 from benchmark.writer import BenchmarkWriter
 from dataset.dataset_tables_dict import get_dataset_name
 from dataset.query_gen_factory import get_query_gen
-from llm_cache.git_snapshotter import GitSnapshotter
 from llm_cache.logger import setup_logging
 from tools.fasttest.run import RunTool
 from tools.validate_tool.query_validator_class import format_args_string
@@ -54,7 +53,7 @@ def _filter_query_ids(all_ids: List[str], query_ids: str | None) -> List[str]:
         available = ", ".join(all_ids[:30])
         raise ValueError(
             f"No matching query IDs found for: {query_ids}. "
-            f"Available in snapshot: {available}"
+            f"Available: {available}"
         )
     return filtered
 
@@ -83,7 +82,6 @@ def _parse_systems(raw: str) -> list[str]:
 def _build_runners(
     system_names: list[str],
     db_engine: RunTool | None,
-    snapshotter: GitSnapshotter | None,
     parquet_path: Path,
     benchmark: str,
     scale_factors: list,
@@ -92,11 +90,9 @@ def _build_runners(
     for name in system_names:
         if name == "bespoke":
             assert db_engine is not None, "db_engine required for BespokeRunner"
-            assert snapshotter is not None, "snapshotter required for BespokeRunner"
             runners.append(
                 BespokeRunner(
                     db_engine=db_engine,
-                    snapshotter=snapshotter,
                 )
             )
         elif name == "duckdb":
@@ -147,26 +143,15 @@ def run_benchmark(args) -> None:
         system_names = _parse_systems(getattr(args, "systems", "bespoke,duckdb"))
         if not system_names:
             raise ValueError("--systems must specify at least one system.")
-        use_snapshots = "bespoke" in system_names
+        use_bespoke = "bespoke" in system_names
 
-        snapshots: list[str] = []
         if getattr(args, "snapshots", None):
-            snapshots = [s.strip() for s in args.snapshots.split(",") if s.strip()]
-        if use_snapshots and not snapshots:
-            raise ValueError("Provide --snapshots when benchmarking the bespoke system.")
+            raise ValueError(
+                "--snapshots is no longer supported. Benchmark the current "
+                "./output workspace instead."
+            )
 
         out_path = Path("./output")
-        snapshotter: GitSnapshotter | None = None
-        if use_snapshots:
-            snapshotter = GitSnapshotter(
-                cache_repo=None
-                if args.disable_repo_sync
-                else "git://c01/bespoke_cache.git",
-                working_dir=out_path,
-                extra_gitignore=[],
-            )
-            snapshotter.fetch_snapshots()
-
         csv_writer = None
         host = socket.gethostname()
         base_seed = int(getattr(args, "seed", 42))
@@ -182,7 +167,7 @@ def run_benchmark(args) -> None:
                     "system",
                     "time_ms",
                     "hostname",
-                    "snapshot",
+                    "workspace",
                     "seed",
                     "placeholders_hash",
                 ]
@@ -207,24 +192,21 @@ def run_benchmark(args) -> None:
 
         # Only set up Bespoke infrastructure when it's actually requested.
         db_engine: RunTool | None = None
-        if use_snapshots:
-            assert snapshotter is not None
+        if use_bespoke:
             db_engine = RunTool(
                 cwd=out_path,
                 query_validator=None,
                 dataset_name=get_dataset_name(args.benchmark),
                 base_parquet_dir=args.base_parquet_dir
                 + f"/{get_dataset_name(args.benchmark)}_parquet/",
-                git_snapshotter=snapshotter,
+                git_snapshotter=None,
             )
 
         query_ids = _filter_query_ids(query_ids, args.query_ids)
-        run_snapshots = snapshots if use_snapshots else [""]
 
         runners = _build_runners(
             system_names=system_names,
             db_engine=db_engine,
-            snapshotter=snapshotter,
             parquet_path=parquet_path,
             benchmark=args.benchmark,
             scale_factors=scale_factors,
@@ -233,16 +215,7 @@ def run_benchmark(args) -> None:
 
         logger.info(f"Benchmarking queries: {','.join(map(str, query_ids))}")
 
-        for snapshot in run_snapshots:
-            if use_snapshots:
-                bespoke_runner = next(
-                    (r for r in runners if isinstance(r, BespokeRunner)), None
-                )
-                assert bespoke_runner is not None, (
-                    "Bespoke runner missing despite use_snapshots=True"
-                )
-                bespoke_runner.restore_snapshot(snapshot)
-
+        for workspace_id in ["current"]:
             for scale_factor in scale_factors:
                 logger.info(f"Scale factor: {scale_factor}")
                 query_ids_needed = set(query_ids)
@@ -273,7 +246,7 @@ def run_benchmark(args) -> None:
                         query_list=query_list,
                         sql_list=sql_list,
                         args_list=args_list,
-                        snapshot=snapshot,
+                        workspace_id=workspace_id,
                     )
 
                 for idx, query_id in enumerate(query_list):
@@ -298,7 +271,7 @@ def run_benchmark(args) -> None:
                                         runner.name,
                                         t,
                                         host,
-                                        snapshot,
+                                        workspace_id,
                                         base_seed,
                                         placeholders_hash,
                                     ]

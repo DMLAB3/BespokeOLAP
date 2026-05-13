@@ -7,12 +7,6 @@ from utils.cli_config import add_common_args
 def build_run_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=add_help)
     parser.add_argument(
-        "--snapshots",
-        type=str,
-        default=None,
-        help="Comma-separated list of snapshot commit hashes to iterate (for bespoke).",
-    )
-    parser.add_argument(
         "--scale_factors",
         type=str,
         default="1",
@@ -57,7 +51,6 @@ def build_run_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     add_common_args(
         parser,
         include_notify=True,
-        include_disable_repo_sync=True,
         include_artifacts_dir=True,
         include_base_parquet_dir=True,
     )

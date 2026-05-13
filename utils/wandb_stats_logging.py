@@ -23,13 +23,17 @@ class WandbRunHook(RunHooks):
     def __init__(
         self,
         model,
-        git_snapshotter: GitSnapshotter,
+        git_snapshotter: GitSnapshotter | None,
+        working_dir: Path | None = None,
         prompt_idx: int = 0,
         disable: bool = False,
         cloc_cache_dir: Path | None = None,
     ):
         self.model = model
         self.git_snapshotter = git_snapshotter
+        self.working_dir = working_dir or (
+            git_snapshotter.working_dir if git_snapshotter is not None else None
+        )
         self.prompt_idx = prompt_idx  # will be externally set by conversation loop
         self.disable = disable
         self.current_prompt: Optional[str] = (
@@ -93,15 +97,22 @@ class WandbRunHook(RunHooks):
             action_str = action.replace("_", "")  # strip _ from type for action_str
             metrics[f"tool/{action_str}_count"] = self.total_type_counts[action]
 
-        metrics["current_hash"] = self.git_snapshotter.current_hash
-        assert self.git_snapshotter.current_hash is not None, (
-            "Current hash should not be None"
-        )
-        metrics["current_loc"] = calculate_loc(
-            self.cloc_cache_dir,
-            self.git_snapshotter.current_hash,
-            self.git_snapshotter.working_dir,
-        )
+        if self.git_snapshotter is not None:
+            current_hash = self.git_snapshotter.current_hash
+            cloc_cache_dir = self.cloc_cache_dir
+        else:
+            current_hash = "no-snapshot"
+            cloc_cache_dir = None
+
+        metrics["current_hash"] = current_hash
+        if self.working_dir is not None and current_hash is not None:
+            metrics["current_loc"] = calculate_loc(
+                cloc_cache_dir,
+                current_hash,
+                self.working_dir,
+            )
+        else:
+            metrics["current_loc"] = 0
 
         wandb.log(metrics, step=turn, commit=False)
 

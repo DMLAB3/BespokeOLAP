@@ -1,25 +1,20 @@
 import os
+from typing import Any
 
-from openai import AsyncOpenAI
+import dspy
+
+DEFAULT_DSPY_MODEL = "gemini/gemini-3.1-flash-lite"
 
 
-def setup_model_config(model_arg: str) -> tuple[bool, str, str | None, AsyncOpenAI]:
-    model_name = model_arg
-    litellm_prefix = "litellm/"
-    use_litellm = model_name.startswith(litellm_prefix)
-    openai_api_key = os.environ.get("OPENAI_API_KEY")
-    if use_litellm:
-        model_name = model_name[len(litellm_prefix) :]
-        api_key = (
-            os.environ.get("LITELLM_API_KEY")
-            or os.environ.get("ANTHROPIC_API_KEY")
-            or os.environ.get("OPENAI_API_KEY")
-        )
-        if not api_key:
-            raise RuntimeError(
-                "LITELLM_API_KEY (or provider API key) must be set for litellm models."
-            )
-    else:
-        api_key = openai_api_key
-    client = AsyncOpenAI(api_key=openai_api_key)
-    return use_litellm, model_name, api_key, client
+def setup_dspy_model_config(
+    model_arg: str | None = None,
+    callbacks: list[Any] | None = None,
+) -> tuple[str, dspy.LM]:
+    model_name = model_arg or DEFAULT_DSPY_MODEL
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY must be set for DSPy Gemini models.")
+
+    lm = dspy.LM(model_name, api_key=api_key, cache=True)
+    dspy.configure(lm=lm, track_usage=True, callbacks=callbacks or [])
+    return model_name, lm

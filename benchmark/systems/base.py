@@ -11,7 +11,7 @@ class SystemRunner(Protocol):
         query_list: list[str],
         sql_list: list[str],
         args_list: list[str],
-        snapshot: str,
+        workspace_id: str,
     ) -> list[float | None]:
         """Run all queries for one scale factor."""
         ...

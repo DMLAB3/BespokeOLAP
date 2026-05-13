@@ -35,12 +35,12 @@ def main(args):
         query_list=",".join(map(str, query_ids)),
         notify=args.notify,
         conv_mode="scripted",
-        disable_repo_sync=args.disable_repo_sync,
         max_scale_factor=max_scale_factor,
         disable_valtool=True,
         replay_cache=args.replay_cache,
         auto_u=args.auto_u,
         auto_finish=args.auto_finish,
+        model=args.model,
     )
 
     # create conversation
@@ -112,9 +112,9 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     add_common_args(
         parser,
         include_notify=True,
-        include_disable_repo_sync=True,
         include_replay_cache=True,
         include_benchmark=True,
+        include_model=True,
         include_auto_u=True,
         include_auto_finish=True,
     )

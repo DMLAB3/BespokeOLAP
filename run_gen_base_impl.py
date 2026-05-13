@@ -15,10 +15,9 @@ from tools.validate_tool.sf_list_gen import gen_sf
 from utils.cli_config import add_common_args, build_run_config
 from utils.gen_common import parse_query_ids
 from utils.get_sample_q_args import get_sample_query_args
-from utils.wandb_api_helper import wandb_retrieve_metrics_for_run
 
 ### RUN CMD
-# python gen_base_code_fasttest.py --conv basef1-22v1 --with_storage_plan --benchmark tpch --notify --replay_cache --auto_u --auto_finish
+# python run_gen_base_impl.py --conv basef1-22v1 --benchmark tpch --notify --replay_cache --auto_u --auto_finish
 
 
 def main(args):
@@ -48,37 +47,13 @@ def main(args):
     verify_sf_list, max_scale_factor = gen_sf(benchmark)
 
     if with_storage_plan:
-        if args.storage_plan_snapshot is not None:
-            from_storage_plan_snapshot = args.storage_plan_snapshot
-        elif benchmark == "tpch":
-            from_storage_plan_snapshot = (
-                "nhpul25g"  # previous storage plan run for tpch (wandb-id)
-            )
-        elif benchmark == "ceb":
-            from_storage_plan_snapshot = (
-                "x527bk9j"  # previous storage plan run for ceb (wandb-id)
-            )
-        elif benchmark == "spatial":
-            raise ValueError(
-                "No default storage-plan run is configured for benchmark 'spatial' yet. "
-                "Run without --with_storage_plan or pass --storage_plan_snapshot <snapshot-or-wandb-run-id>."
-            )
-        else:
-            raise ValueError(f"Unknown benchmark {benchmark}")
-    else:
-        from_storage_plan_snapshot = None
-
-    if from_storage_plan_snapshot is not None:
-        storage_plan_snapshot = from_storage_plan_snapshot
-        if len(storage_plan_snapshot) == 8:
-            statistics, _ = wandb_retrieve_metrics_for_run(
-                benchmark,
-                storage_plan_snapshot,
-            )
-
-            storage_plan_snapshot = statistics["last_commit_hash"]  # type: ignore
-    else:
-        storage_plan_snapshot = None
+        raise ValueError(
+            "--with_storage_plan depended on restoring a git snapshot from a "
+            "previous storage-plan run. Git snapshots are disabled in the DSPy "
+            "runtime, so generate a base implementation without "
+            "--with_storage_plan or place a storage_plan.txt in ./output and use "
+            "manual/continue mode."
+        )
 
     config = build_run_config(
         benchmark=benchmark,
@@ -86,10 +61,8 @@ def main(args):
         conv_mode="scripted",
         query_list=",".join(map(str, query_ids)),
         notify=args.notify,
-        disable_repo_sync=args.disable_repo_sync,
         max_scale_factor=max_scale_factor,
         replay_cache=args.replay_cache,
-        storage_plan_snapshot=storage_plan_snapshot,
         keep_csv=True,  # keep .csv files around instead of git-ignoring them (maybe to backtrack correctness issues)
         disable_tracing=args.disable_tracing,
         disable_wandb=args.disable_wandb,  # TODO fix this, by overwriting sys.args
@@ -97,6 +70,8 @@ def main(args):
         auto_finish=args.auto_finish,
         is_bespoke_storage=with_storage_plan,
         replay=args.replay,
+        model=args.model,
+        only_from_llm_cache=args.only_from_llm_cache,
     )
 
     # get sample query args for later use in the conversation (e.g. for better prompt formatting)
@@ -111,7 +86,7 @@ def main(args):
         artifacts_dir=Path(config.artifacts_dir),
         conversation_dir=Path(config.artifacts_dir) / "conversations",
         benchmark=benchmark,
-        read_storage_plan=from_storage_plan_snapshot is not None,
+        read_storage_plan=False,
         sample_query_args_dict=sample_query_args_dict,
     )
 
@@ -315,22 +290,21 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
         "--with_storage_plan",
         action="store_true",
         default=False,
-        help="Whether to read the storage plan from a previous run",
+        help="Unsupported in the no-snapshot DSPy runtime.",
     )
 
     add_common_args(
         parser,
         include_notify=True,
-        include_disable_repo_sync=True,
         include_replay_cache=True,
         include_benchmark=True,
+        include_model=True,
         include_disable_wandb=True,
         include_disable_tracing=True,
         include_auto_u=True,
         include_auto_finish=True,
         include_replay=True,
         include_only_from_llm_cache=True,
-        include_storage_plan_snapshot=True,
     )
     return parser
 

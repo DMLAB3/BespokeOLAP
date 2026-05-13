@@ -2,18 +2,11 @@ import argparse
 import asyncio
 import logging
 import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from agents import (
-    Agent,
-    ApplyPatchTool,
-    ModelSettings,
-    Runner,
-    ShellTool,
-    trace,
-)
 from agents.extensions.memory import AdvancedSQLiteSession
 from agents.tracing import set_tracing_disabled
 from dotenv import load_dotenv
@@ -30,27 +23,23 @@ from conversations.optimization_conversation import OptimizationConversation
 from conversations.scripted_conversation import ScriptedConversation
 from dataset.dataset_tables_dict import get_dataset_name
 from dataset.query_gen_factory import get_placeholders_fn, get_query_gen
-from llm_cache import (
-    CachedLitellmModel,
-    CachedOpenAIResponsesModel,
-    GitSnapshotter,
-    setup_logging,
+from llm_cache.dspy_runtime import (
+    DspyBespokeAgent,
+    DspySessionStore,
+    DspyToolbox,
+    DspyWandbCallback,
 )
-from llm_cache.cached_compaction_session import CachedOpenAIResponsesCompactionSession
+from llm_cache.logger import setup_logging
 from llm_cache.utils import ask_yes_no
-from tools.fasttest import copy_template_to, make_compile_tool, make_run_tool
-from tools.litellm_apply_patch import make_litellm_apply_patch_tool
-from tools.litellm_shell import make_litellm_shell_tool
-from tools.shell_executor import ShellExecutor
+from tools.fasttest import copy_template_to
+from tools.fasttest.compile import CompileTool
+from tools.fasttest.run import RunTool
 from tools.validate_tool.query_validator_class import QueryValidator
 from tools.validate_tool.sf_list_gen import gen_sf
-from tools.workspace_editor import WorkspaceEditor
 from utils.cli_config import add_common_args
 from utils.general_utils import write_query_and_args_file
-from utils.model_setup import setup_model_config
+from utils.model_setup import setup_dspy_model_config
 from utils.pkgconfig import check_pkg
-from utils.snapshot_utils import load_storage_plan_from_snapshot
-from utils.token_usage import get_tokens_context_and_dollar_info
 from utils.truncate_model_log import truncate_model_final_output
 from utils.wandb_stats_logging import WandbRunHook
 from utils.weave_cache import configure_weave_cache_dirs
@@ -66,50 +55,31 @@ def _unique_scale_factors(scale_factors: list[float]) -> list[float]:
     return unique
 
 
+def _clean_workspace_without_git(workspace_path: Path) -> None:
+    for child in workspace_path.iterdir():
+        if child.name == "logs":
+            continue
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+
+
 async def main(args: argparse.Namespace) -> None:
     workspace_path = Path("./output")
     workspace_path.mkdir(exist_ok=True)
 
     cache_path = Path(args.artifacts_dir) / "cache"
-    cache_repo = None if args.disable_repo_sync else os.environ.get(
-        "BESPOKE_CACHE_REPO",
-        "git@github.com:DMLAB3/bespoke_cache.git",
-    )
-
 
     conversations_dir = Path(args.artifacts_dir) / "conversations"
-
-    extra_gitignore = ["*.o", "*.d", "/db", "/build/", "*.log", "*.tmp"]
-    if not args.keep_csv:
-        # in optimize mode, ignore all .csv files (they are generated during validation).
-        # in gen_code mode, we want to keep them around in case of major issues with ensuring correctness while generating the base implementation.
-        extra_gitignore.append("*.csv")
 
     # add versioning for the table dataset (dataset got regenerated, scale-up/down code was changed, query args input syntax was changed, etc. - in these cases we want to make sure that old cache entries are not used for the new dataset version)
     dataset_version = None
     if args.benchmark == "ceb":
         dataset_version = "3"
 
-    snapshotter = GitSnapshotter(
-        cache_repo=cache_repo,
-        working_dir=workspace_path,
-        extra_gitignore=extra_gitignore,
-    )
-    if snapshotter.is_dirty():
-        if args.continue_run:
-            logger.warning(
-                f'Continuing with uncommitted changes in "{workspace_path}".'
-            )
-        else:
-            logger.warning(
-                f'Cleaning uncommitted changes in "{workspace_path}" before starting a reproducible run.'
-            )
-            if snapshotter.has_head():
-                snapshotter.reset_changes()
-            snapshotter.clear_untracked(include_ignored=True)
-
     ##############################
-    # Prepare workspace / snapshot
+    # Prepare workspace
     ##############################
 
     # prepare query gen
@@ -120,68 +90,52 @@ async def main(args: argparse.Namespace) -> None:
 
     query_list = [q.strip() for q in args.query_list.split(",")]
 
-    if args.storage_plan_snapshot is not None:
-        # load storage plan snapshot and read storage plan form it.
-        # afterwards a clean or other snapshot will be loaded
-        storage_plan = load_storage_plan_from_snapshot(
-            args, snapshotter, workspace_path
+    if (
+        getattr(args, "start_snapshot", None) is not None
+        or getattr(args, "storage_plan_snapshot", None) is not None
+    ):
+        raise ValueError(
+            "Git snapshots are disabled in the DSPy runtime. "
+            "--start_snapshot and --storage_plan_snapshot are not supported."
         )
-
-        assert args.start_snapshot is None, (
-            "loading a storage plan snapshot, but also providing a start snapshot is not supported. Are you really sure? Usually the storage plan will be kept in the snapshots as soons as coding starts, and you don't have to pass them again."
-        )
-    else:
-        storage_plan = None
+    storage_plan = None
 
     artifacts_in_context = ""
     disable_artifacts_context = getattr(args, "disable_artifacts_context", False)
-    # setup snapshot / workspace according to mode
-    if args.start_snapshot is None:
-        # gen -code mode
-        if not args.continue_run:
-            # create an empty snapshot
-            snapshotter.create_empty_snapshot(args.conv_name)
-
-            # uses fasttest
-            # add template files to workspace
-            # assemble string containing content of copied files - for versioning / snapshotting
-            template_artifacts = copy_template_to(workspace_path, args.benchmark)
-            if not disable_artifacts_context:
-                artifacts_in_context += template_artifacts
-
-            # when snapshow is created, we assume these files are part of the snapshot and already present
-            logger.info(
-                f"Generating query and args files for queries: {args.benchmark}/{query_list}"
-            )
-            query_artifacts = write_query_and_args_file(
-                benchmark_name=args.benchmark,
-                gen_placeholders_fn=gen_placeholders_fn,
-                query_list=query_list,
-                out_dir=workspace_path.as_posix(),
-                use_fasttest_format=True,  # old validate tool uses old format (fasttest format introduced with hotpatching / compile_tool, run_tool)
-                storage_plan=storage_plan,
-            )
-            if not disable_artifacts_context:
-                artifacts_in_context += query_artifacts
-        else:
-            pass
-    else:
-        assert not args.continue_run
-
-        # check that snapshot exists
-        assert snapshotter.has_snapshot(args.start_snapshot), (
-            f"Snapshot {args.start_snapshot} not found in repo."
+    if not args.continue_run:
+        logger.warning(
+            f'Cleaning "{workspace_path}" before starting a fresh no-snapshot run.'
         )
+        _clean_workspace_without_git(workspace_path)
 
-        # load from provided snapshot
-        logger.info(f"Restoring snapshot {args.start_snapshot}")
-        snapshotter.restore(args.start_snapshot)
+        template_artifacts = copy_template_to(workspace_path, args.benchmark)
+        if not disable_artifacts_context:
+            artifacts_in_context += template_artifacts
 
-        # delete all .csv files from prior runs
-        csv_files = list(workspace_path.rglob("result*.csv"))
-        logger.info(f"Deleting existing result-csv files ({len(csv_files)} files).")
-        for csv_file in csv_files:
-            csv_file.unlink()
+        logger.info(
+            f"Generating query and args files for queries: {args.benchmark}/{query_list}"
+        )
+        query_artifacts = write_query_and_args_file(
+            benchmark_name=args.benchmark,
+            gen_placeholders_fn=gen_placeholders_fn,
+            query_list=query_list,
+            out_dir=workspace_path.as_posix(),
+            use_fasttest_format=True,
+            storage_plan=storage_plan,
+        )
+        if not disable_artifacts_context:
+            artifacts_in_context += query_artifacts
+    else:
+        logger.warning(f'Continuing current files in "{workspace_path}".')
+
+    timestamp = getattr(args, "_log_timestamp", datetime.now().strftime("%Y%m%d_%H%M%S"))
+    log_path = workspace_path / "logs"
+    log_path.mkdir(parents=True, exist_ok=True)
+    run_log_path = log_path / f"{timestamp}_{args.conv_name}.log"
+    llm_log_path = log_path / f"{timestamp}_{args.conv_name}_llm_calls.jsonl"
+    setup_logging(logging.DEBUG, run_log_path)
+    logger.info("Logging to %s", run_log_path)
+    logger.info("Logging full LLM calls to %s", llm_log_path)
 
     ###############
     # Misc setup
@@ -198,7 +152,8 @@ async def main(args: argparse.Namespace) -> None:
     if not args.disable_wandb:
         wandb_metrics_hook = WandbRunHook(
             model=args.model,
-            git_snapshotter=snapshotter,
+            git_snapshotter=None,
+            working_dir=workspace_path,
             cloc_cache_dir=cache_path / "cloc_cache",
         )
 
@@ -219,169 +174,96 @@ async def main(args: argparse.Namespace) -> None:
             query_cache_dir=cache_path / "query_cache",
             validate_cache_dir=cache_path / "validate_tool",
             workspace_path=workspace_path,
-            git_snapshotter=snapshotter,
+            git_snapshotter=None,
         )
 
     ###############
     # Prepare Tools
     ###############
-    editor = WorkspaceEditor(workspace_path, wandb_metrics_hook=wandb_metrics_hook)
-    shell = ShellExecutor(
-        workspace_path,
-        snapshotter=snapshotter,
-        cache_dir=cache_path / "shell",
-        wandb_metrics_hook=wandb_metrics_hook,
-    )
-
-    tools = [
-        ApplyPatchTool(editor=editor),
-        ShellTool(executor=shell),
-    ]
-
+    compile_tool: CompileTool | None = None
+    run_tool: RunTool | None = None
     if query_validator is not None:
-        run_tool_wrapper, run_tool = make_run_tool(
+        dataset_name = get_dataset_name(args.benchmark)
+        compile_tool = CompileTool(
+            cwd=workspace_path,
+            compile_cache_dir=compile_cache_dir,
+            git_snapshotter=None,
+            wandb_metrics_hook=wandb_metrics_hook,
+        )
+        run_tool = RunTool(
             cwd=workspace_path,
             query_validator=query_validator,
             wandb_metrics_hook=wandb_metrics_hook,
             compile_cache_dir=compile_cache_dir,
-            git_snapshotter=snapshotter,
-            dataset_name=get_dataset_name(args.benchmark),
-            base_parquet_dir=args.base_parquet_dir,
-            run_tool_offer_trace_option=args.run_tool_offer_trace_option,
+            git_snapshotter=None,
+            dataset_name=dataset_name,
+            base_parquet_dir=f"{args.base_parquet_dir}/{dataset_name}_parquet/",
             only_from_cache=args.only_from_cache,
         )
-        tools.extend(
-            [
-                make_compile_tool(
-                    cwd=workspace_path,
-                    compile_cache_dir=compile_cache_dir,
-                    git_snapshotter=snapshotter,
-                    wandb_metrics_hook=wandb_metrics_hook,
-                ),
-                run_tool_wrapper,
-            ]
-        )
 
     #########################
-    # Prepare Model and Agent
+    # Prepare DSPy Model and Agent
     #########################
 
-    # setup cached compaction session
-    use_litellm, model_name, api_key, client = setup_model_config(args.model)
+    dspy_callbacks = (
+        [DspyWandbCallback(wandb_metrics_hook, llm_log_path=llm_log_path)]
+        if wandb_metrics_hook
+        else [DspyWandbCallback(None, llm_log_path=llm_log_path)]
+    )
+    model_name, lm = setup_dspy_model_config(args.model, callbacks=dspy_callbacks)
     underlying_session = AdvancedSQLiteSession(
         session_id=args.conv_name, create_tables=True
     )
-
-    def log_should_trigger_compaction(context: dict[str, Any]) -> bool:
-        """Default decision: compact when >= 10 candidate items exist."""
-        # logger.info(
-        #     f"Ctx len candidate items: {len(context['compaction_candidate_items'])}",
-        # )
-        return False
-
-    # assemble session
-    session = CachedOpenAIResponsesCompactionSession(
-        session_id=args.conv_name,
-        client=client,
-        underlying_session=underlying_session,
-        should_trigger_compaction=log_should_trigger_compaction,
-        cache_dir=cache_path / "compaction",
-        model="gpt-5.2",
-        wandb_metrics_hook=wandb_metrics_hook,
+    session_store = DspySessionStore(
+        cache_path / "dspy_sessions" / f"{args.conv_name}.json"
     )
 
     # prepare dict to be included in hash
-    config_kwargs: Dict[str, Any] = {"max_snapshot_csv_size_mb": 5.0}
-    if args.start_snapshot is not None:
-        # include start snapshot in hash - makes cache specific to this code base
-        config_kwargs["start_snapshot"] = args.start_snapshot
-
+    config_kwargs: Dict[str, Any] = {"max_workspace_csv_size_mb": 5.0}
     if dataset_version is not None:
         config_kwargs["dataset_version"] = dataset_version
 
-    if use_litellm:
-        model = CachedLitellmModel(
-            model=model_name,
-            api_key=api_key,
-            llm_cache_dir=cache_path / "llm_cache",
-            snapshotter=snapshotter,
-            stop_on_cache_miss=args.replay,
-            query_gen_list=query_list,
-            artifacts_in_context=artifacts_in_context,
-            config_kwargs=config_kwargs,
-        )
-        tools = [
-            tool for tool in tools if not isinstance(tool, (ApplyPatchTool, ShellTool))
-        ]
-        tools.insert(
-            0,
-            make_litellm_apply_patch_tool(
-                root=workspace_path,
-                wandb_metrics_hook=wandb_metrics_hook,
-            ),
-        )
-        tools.insert(
-            0,
-            make_litellm_shell_tool(
-                cwd=workspace_path,
-                cache_dir=cache_path / "shell",
-                git_snapshotter=snapshotter,
-                wandb_metrics_hook=wandb_metrics_hook,
-            ),
-        )
-    else:
-        model = CachedOpenAIResponsesModel(
-            model=model_name,
-            openai_client=client,
-            llm_cache_dir=cache_path / "llm_cache",
-            snapshotter=snapshotter,
-            stop_on_cache_miss=args.replay
-            or args.only_from_llm_cache
-            or args.only_from_cache,
-            query_gen_list=query_list,  # add to hash to make sure cache is specific to these queries
-            artifacts_in_context=artifacts_in_context,  # add to hash to make sure cache is specific to these queries - these files might be different even for same query ids - prevent that snapshotter is overwritting never versions of them.
-            config_kwargs=config_kwargs,  # will be included in hash
-        )
-
-    instructions = [
-        f"You can edit files inside {workspace_path} using the apply_patch tool. ",  # follows openai cookbook: https://github.com/openai/openai-agents-python/blob/main/examples/tools/apply_patch.py
-        "When modifying an existing file, include the file contents between ",
-        "<BEGIN_FILES> and <END_FILES> in your prompt. ",
-        "You can run shell commands using the shell tool. Do not emit argv form. ",
-    ]
-    if query_validator is not None:
-        instructions.extend(
-            [
-                "You can compile the code using the compile tool. ",
-                "You can run a list of queries using the run tool. The run tool automatically compiles the code. You can specify the queries to run and the scale factors to use. If no queries are specified, all queries will be run.",
-            ]
-        )
-    if use_litellm:
-        instructions = [
-            f"You can edit files inside {workspace_path} using the apply_patch tool. ",
-            "When modifying an existing file, include the file contents between ",
-            "<BEGIN_FILES> and <END_FILES> in your prompt. ",
-            "You can run shell commands using the shell tool. Do not emit argv form. ",
-        ]
-        if query_validator is not None:
-            instructions.extend(
-                [
-                    "You can compile the code using the compile tool. ",
-                    "You can run a list of queries using the run tool. The run tool automatically compiles the code. You can specify the queries to run and the scale factors to use. If no queries are specified, all queries will be run.",
-                ]
-            )
-
-    model_settings = ModelSettings(tool_choice="auto")
-    if use_litellm:
-        model_settings = ModelSettings(tool_choice="auto", include_usage=True)
-    default_agent_name = "Bespoke Assistant"
-    agent = Agent(
-        name=default_agent_name,
-        model=model,
-        instructions="".join(instructions),
-        tools=tools,
-        model_settings=model_settings,
+    dspy_tools = DspyToolbox(
+        workspace_path=workspace_path,
+        cache_path=cache_path,
+        snapshotter=None,
+        compile_tool=compile_tool,
+        run_tool=run_tool,
+        wandb_metrics_hook=wandb_metrics_hook,
     )
+    model = DspyBespokeAgent(
+        model_name=model_name,
+        lm=lm,
+        tools=dspy_tools,
+        llm_cache_dir=cache_path / "dspy_llm_cache",
+        snapshotter=None,
+        workspace_path=workspace_path,
+        stop_on_cache_miss=args.replay
+        or args.only_from_llm_cache
+        or args.only_from_cache,
+        query_gen_list=query_list,
+        artifacts_in_context=artifacts_in_context,
+        config_kwargs=config_kwargs,
+        callbacks=dspy_callbacks,
+    )
+
+    workspace_contract = "".join(
+        [
+            f"You can edit files inside {workspace_path} using the apply_patch tool. ",
+            "When modifying an existing file, provide a unified diff and set op_type "
+            "to create_file, update_file, or delete_file. ",
+            "You can run shell commands using the shell tool. ",
+            "Do not emit argv form for shell commands. ",
+            "Finish only after required files are written and checks requested by the task are complete. ",
+        ]
+    )
+    if query_validator is not None:
+        workspace_contract += (
+            "You can compile the code using the compile tool. "
+            "You can run a list of queries using the run tool. The run tool "
+            "automatically compiles the code. Specify query_id when running a "
+            "subset; omit query_id to run all queries."
+        )
 
     logger.info(f"Workspace root: {workspace_path}")
     logger.info(f"Using model: {model}")
@@ -400,14 +282,27 @@ async def main(args: argparse.Namespace) -> None:
         # check for compaction marker in the prompt string - in this case run compaction and return
         if text == COMPACTION_MARKER:
             logger.info(f"Triggering compaction at prompt index {idx}")
-            await session.run_compaction({"force": True, "compaction_mode": "input"})
+            branch_id = getattr(underlying_session, "_current_branch_id", "main")
+            session_items = await underlying_session.get_items()
+            recent_context = session_store.render_context(
+                branch_id=branch_id,
+                session_items=session_items,
+            )
+            summary = await asyncio.to_thread(
+                model.compact_context,
+                session_store.get_summary(branch_id),
+                recent_context,
+            )
+            session_store.compact(summary, branch_id=branch_id)
             return None
         # check for markers to enable / disable validation
         if text == VALIDATE_ON:
+            assert run_tool is not None
             run_tool.parse_out_and_validate_output = True
             logger.info(f"Enabled output parsing and validation at prompt index {idx}")
             return None
         if text == VALIDATE_OFF:
+            assert run_tool is not None
             run_tool.parse_out_and_validate_output = False
             logger.info(f"Disabled output parsing and validation at prompt index {idx}")
             return None
@@ -436,80 +331,73 @@ async def main(args: argparse.Namespace) -> None:
             wandb_metrics_hook.current_prompt = text
             wandb_metrics_hook.current_prompt_descriptor = short_desc
 
-        # Rename the agent for each stage based on the short description - this makes it easier to analyze the tracing logs and see which stage is producing which output, without having to rely on the prompt content which might be very long. The name will be reset to default_agent_name if short_desc is None, which is the case for normal prompts that are not associated with a specific stage.
-        # We rewrite it to hack a different header for each stage into the tracing log.
-        # THIS IS RISKY: if openai somehow refers to agent.name this is a problem, since it will be not an identifier anymore.
-        if short_desc is None:
-            agent.name = default_agent_name
-        else:
-            agent.name = f"{default_agent_name} ({short_desc})"
+        branch_id = getattr(underlying_session, "_current_branch_id", "main")
+        session_items = await underlying_session.get_items()
+        conversation_context = session_store.render_context(
+            branch_id=branch_id,
+            session_items=session_items,
+        )
 
-        # Run with hooks for automatic metric tracking
-        result = await Runner.run(
-            agent,
-            input=text,
-            session=session,
+        final_output = await asyncio.to_thread(
+            model.run,
+            task=text,
+            conversation_context=conversation_context,
+            workspace_contract=workspace_contract,
             max_turns=max_turns,
-            hooks=wandb_metrics_hook,
+            wandb_metrics_hook=wandb_metrics_hook,
+            prompt_idx=idx,
+            short_desc=short_desc,
         )
 
-        # # store run usage
-        # session.underlying_session.store_run_usage(result)
-
-        # Log cost summary
-        get_tokens_context_and_dollar_info(
-            result.context_wrapper.usage, str(model), last_entry_only=False, log=True
+        await underlying_session.add_items(
+            [
+                {"role": "user", "content": text},
+                {"role": "assistant", "content": final_output},
+            ]
         )
+        session_store.append_turn(text, final_output, branch_id=branch_id)
 
         # log final output (truncated)
-        logger.info(truncate_model_final_output(result.final_output))
+        logger.info(truncate_model_final_output(final_output))
 
-        return result.final_output
+        return final_output
 
-    # manually traced conversation - otherwise will produce multiple separate traces (for each Runner.run() invocation)
-    with trace(
-        f"Bespoke-Agent {args.conv_name} Conversation",
-        metadata={  # log some metadata about this run
-            "query": args.conv_name,
-            "model": args.model,
-            "tools": str([type(t).__name__ for t in tools]),
-        },
-    ):
-        conv_args = dict(
-            conversation_json_path=conversations_dir / f"{args.conv_name}.json",
-            callback=handle_prompt,
-            auto_finish=args.auto_finish,
-            replay_cache=args.replay_cache,
-            auto_u=args.auto_u,
-            replay=args.replay,
-            notify=args.notify,
-            model=model,
+    conv_args = dict(
+        conversation_json_path=conversations_dir / f"{args.conv_name}.json",
+        callback=handle_prompt,
+        auto_finish=args.auto_finish,
+        replay_cache=args.replay_cache,
+        auto_u=args.auto_u,
+        replay=args.replay,
+        notify=args.notify,
+        model=model,
+    )
+    if args.conv_mode == "scripted":
+        # all prompts are pre-defined and are listed in the json file (hence "scripted") - user can still give input.
+        conv = ScriptedConversation(**conv_args)
+    elif args.conv_mode == "optimization":
+        # optimization loop is self-steered. It will vary based on model output, measured speedups, ...
+        assert query_validator is not None, (
+            "query_validator must be provided for optimization conversation"
         )
-        if args.conv_mode == "scripted":
-            # all prompts are pre-defined and are listed in the json file (hence "scripted") - user can still give input.
-            conv = ScriptedConversation(**conv_args)
-        elif args.conv_mode == "optimization":
-            # optimization loop is self-steered. It will vary based on model output, measured speedups, ...
-            assert query_validator is not None, (
-                "query_validator must be provided for optimization conversation"
-            )
-            conv = OptimizationConversation(
-                query_ids=query_list,
-                bespoke_storage=args.is_bespoke_storage,
-                run_tool=run_tool,
-                verify_sf_list=verify_sf_list,
-                benchmark_sf=max_scale_factor,
-                query_validator=query_validator,
-                git_snapshotter=snapshotter,
-                revert_on_regression=True,
-                session=underlying_session,
-                wandb_run_hook=wandb_metrics_hook,
-                **conv_args,
-            )
-        else:
-            raise ValueError(f"Unknown conversation mode: {args.conv_mode}")
+        assert run_tool is not None
+        conv = OptimizationConversation(
+            query_ids=query_list,
+            bespoke_storage=args.is_bespoke_storage,
+            run_tool=run_tool,
+            verify_sf_list=verify_sf_list,
+            benchmark_sf=max_scale_factor,
+            query_validator=query_validator,
+            git_snapshotter=None,
+            revert_on_regression=False,
+            session=underlying_session,
+            wandb_run_hook=wandb_metrics_hook,
+            **conv_args,
+        )
+    else:
+        raise ValueError(f"Unknown conversation mode: {args.conv_mode}")
 
-        await conv.run()
+    await conv.run()
 
     logger.debug(f"Model cache total saved: ${model.total_saved:0.6f}")
 
@@ -531,18 +419,18 @@ async def main(args: argparse.Namespace) -> None:
 def run_conv_wrapper(args: argparse.Namespace) -> None:
     if args.continue_run:
         ask_yes_no(
-            "Are you really sure you want to continue the current snapshot? Does not start from fresh and continues from current state of output folder. This is DANGEROUS as it might include unwanted files already present in the output folder!"
+            "Are you really sure you want to continue the current output workspace? This does not start from a fresh template and might include unwanted files already present in output/."
         )
 
-    log_path = Path(args.artifacts_dir) / "logs"
-    log_path.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    setup_logging(logging.DEBUG, log_path / f"{timestamp}_{args.conv_name}.log")
+    args._log_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    setup_logging(logging.DEBUG)
 
     load_dotenv()
-    if args.disable_tracing:
-        set_tracing_disabled(True)
-    elif not args.disable_wandb:
+    # The active runtime is DSPy, but a few low-level utilities still use
+    # agents.custom_span. Disable OpenAI Agents tracing so those spans become
+    # no-ops instead of logging "No active trace" errors.
+    set_tracing_disabled(True)
+    if not args.disable_tracing and not args.disable_wandb:
         # add weave (wandb) tracing in addition to openai tracing
         configure_weave_cache_dirs()
         import weave
@@ -599,8 +487,6 @@ if __name__ == "__main__":
         include_artifacts_dir=True,
         include_no_preload=True,
         include_notify=True,
-        include_start_snapshot=True,
-        include_disable_repo_sync=True,
         include_replay_cache=True,
         include_auto_u=True,
         include_keep_csv=True,
@@ -608,10 +494,12 @@ if __name__ == "__main__":
         include_disable_artifacts_context=True,
         include_benchmark=True,
         include_auto_finish=True,
-        include_storage_plan_snapshot=True,
         include_conv_mode=True,
         include_is_bespoke_storage=True,
         include_run_tool_offer_trace_option=True,
+        include_only_from_llm_cache=True,
+        include_only_from_cache=True,
+        include_base_parquet_dir=True,
     )
     args = parser.parse_args()
     args.write_query_and_args_files = True

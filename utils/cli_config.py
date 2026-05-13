@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-DEFAULT_MODEL = "gpt-5.3-codex"
+DEFAULT_MODEL = "gemini/gemini-3.1-flash-lite"
 DEFAULT_ARTIFACTS_DIR = "/home/mk/"
 DEFAULT_PARQUET_DIR = "/home/mk/"
 
@@ -14,8 +14,6 @@ def build_run_config(
     query_list: str,
     notify: bool,
     conv_mode: str,  # scripted, optimization, ...
-    start_snapshot: str | None = None,
-    storage_plan_snapshot: str | None = None,
     max_scale_factor: int | None = None,
     continue_run: bool = False,
     replay: bool = False,
@@ -25,7 +23,6 @@ def build_run_config(
     base_parquet_dir: str = DEFAULT_PARQUET_DIR,
     artifacts_dir: str = DEFAULT_ARTIFACTS_DIR,
     no_preload: bool = False,
-    disable_repo_sync: bool = False,
     replay_cache: bool = False,
     keep_csv: bool = False,
     disable_valtool: bool = False,
@@ -54,10 +51,7 @@ def build_run_config(
         artifacts_dir=artifacts_dir,
         no_preload=no_preload,
         notify=notify,
-        start_snapshot=start_snapshot,
-        storage_plan_snapshot=storage_plan_snapshot,
         max_scale_factor=max_scale_factor,
-        disable_repo_sync=disable_repo_sync,
         replay_cache=replay_cache,
         keep_csv=keep_csv,
         disable_valtool=disable_valtool,
@@ -87,10 +81,6 @@ def add_common_args(
     include_artifacts_dir: bool = False,
     include_no_preload: bool = False,
     include_notify: bool = False,
-    include_start_snapshot: bool = False,
-    include_storage_plan_snapshot: bool = False,
-    start_snapshot_required: bool = False,
-    include_disable_repo_sync: bool = False,
     include_replay_cache: bool = False,
     include_auto_u: bool = False,
     include_auto_finish: bool = False,
@@ -155,7 +145,7 @@ def add_common_args(
             "--continue_run",
             action="store_true",
             default=False,
-            help="Continue with the current snapshot in the working-dir. Does not start empty.",
+            help="Continue with the current ./output workspace instead of starting from a fresh template.",
         )
     if include_artifacts_dir:
         parser.add_argument(
@@ -178,34 +168,12 @@ def add_common_args(
             default=False,
             help="Notify when conversation requires action",
         )
-    if include_start_snapshot:
-        parser.add_argument(
-            "--start_snapshot",
-            type=str,
-            default=None,
-            required=start_snapshot_required,
-            help="Path to snapshot to start from (if not continuing current snapshot).",
-        )
     if include_base_parquet_dir:
         parser.add_argument(
             "--base_parquet_dir",
             type=str,
             default=DEFAULT_PARQUET_DIR,
             help="Base parquet directory.",
-        )
-    if include_storage_plan_snapshot:
-        parser.add_argument(
-            "--storage_plan_snapshot",
-            type=str,
-            default=None,
-            help="Path to snapshot to load storage plan from (incompatible with --continue_run).",
-        )
-    if include_disable_repo_sync:
-        parser.add_argument(
-            "--disable_repo_sync",
-            action="store_true",
-            default=False,
-            help="Disable syncing snapshots with the cache repo.",
         )
     if include_replay_cache:
         parser.add_argument(

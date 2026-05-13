@@ -1,6 +1,5 @@
 import logging
 
-from llm_cache.git_snapshotter import GitSnapshotter
 from tools.fasttest.run import RunTool
 from tools.validate_tool.query_validator_class import _parse_output
 
@@ -13,22 +12,8 @@ class BespokeRunner:
     def __init__(
         self,
         db_engine: RunTool,
-        snapshotter: GitSnapshotter,
     ) -> None:
         self._db_engine = db_engine
-        self._snapshotter = snapshotter
-        self._active_snapshot: str | None = None
-
-    def restore_snapshot(self, snapshot: str) -> None:
-        if self._active_snapshot == snapshot:
-            return
-        if not self._snapshotter.has_snapshot(snapshot):
-            raise ValueError(f"Snapshot {snapshot} not found in repo.")
-        # Avoid stale untracked files from previous snapshots (e.g. queries.txt).
-        self._snapshotter.clear_untracked(include_ignored=True)
-        logger.info("Restoring snapshot %s", snapshot)
-        self._snapshotter.restore(snapshot)
-        self._active_snapshot = snapshot
 
     def run_scale_factor(
         self,
@@ -37,7 +22,7 @@ class BespokeRunner:
         query_list: list[str],
         sql_list: list[str],
         args_list: list[str],
-        snapshot: str,
+        workspace_id: str,
     ) -> list[float | None]:
         if not query_ids_needed:
             return [None] * len(query_list)
