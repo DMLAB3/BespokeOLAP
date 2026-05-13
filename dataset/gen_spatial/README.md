@@ -3,10 +3,9 @@
 This repo includes a Python spatial data generator:
 
 ```bash
-python -m dataset.gen_spatial.generate_spatial_data \
-  --scale-factor 0.001 \
+uv run -m dataset.gen_spatial.generate_spatial_data \
+  --scale-factor 0.5 \
   --output-root /tmp/spatial_parquet \
-  --compact \
   --overwrite
 ```
 

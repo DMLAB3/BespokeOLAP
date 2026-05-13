@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-from main import run_conv_wrapper
+from runtime.orchestrator.runner import run_conv_wrapper
 from tools.validate_tool.sf_list_gen import gen_sf
 from utils.cli_config import add_common_args, build_run_config
 from utils.gen_common import parse_query_ids

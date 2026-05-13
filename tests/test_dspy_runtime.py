@@ -280,11 +280,28 @@ def test_dspy_session_store_persists_summary_and_recent_turns(tmp_path):
     assert "Summary:\nshort summary" in reloaded.render_context(branch_id="main")
 
 
+def test_dspy_session_store_renders_artifacts_in_context(tmp_path):
+    store = DspySessionStore(tmp_path / "session.json")
+    context = store.render_context(
+        branch_id="main",
+        session_items=[
+            {"role": "user", "content": "build the layout"},
+            {"role": "assistant", "content": "done"},
+        ],
+        artifacts_in_context="queries.txt\nworkspace contract",
+    )
+
+    assert "Recent branch messages:" in context
+    assert "build the layout" in context
+    assert "Workspace artifacts:" in context
+    assert "queries.txt" in context
+
+
 def test_dspy_wandb_callback_logs_when_run_is_active(monkeypatch):
     logged = []
-    monkeypatch.setattr("llm_cache.dspy_runtime.wandb.run", object())
+    monkeypatch.setattr("runtime.agent.callbacks.wandb.run", object())
     monkeypatch.setattr(
-        "llm_cache.dspy_runtime.wandb.log",
+        "runtime.agent.callbacks.wandb.log",
         lambda payload, step=None, commit=None: logged.append(
             (payload, step, commit)
         ),

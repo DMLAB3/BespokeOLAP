@@ -55,6 +55,7 @@ The generated engine uses a hot-reload architecture: loader, builder, and query 
 - C++ toolchain (`gcc` / `clang`)
 - Python 3.10+
 - [`uv`](https://github.com/astral-sh/uv) package manager
+- `pkg-config`
 - Apache Arrow and Parquet development libraries
 
 ## Installation
@@ -69,7 +70,12 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ### 2. Install Arrow and Parquet libraries
 
+If `pkg-config` is not already installed, install it before the Arrow/Parquet
+development packages:
+
 ```bash
+sudo apt update
+sudo apt install -y pkg-config
 wget https://packages.apache.org/artifactory/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb
 sudo apt install -y -V ./apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb
 sudo apt update

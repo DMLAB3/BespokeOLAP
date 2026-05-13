@@ -4,7 +4,7 @@ import os
 import sys
 from pathlib import Path
 
-from main import run_conv_wrapper
+from runtime.orchestrator.runner import run_conv_wrapper
 
 # add parent to path
 sys.path.append(os.path.join(os.getcwd(), ".."))

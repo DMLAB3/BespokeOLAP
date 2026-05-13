@@ -106,11 +106,7 @@ class RunTool:
             str
         ] = None,  # for external instrumentation: e.g. from benchmarking script (will not use git snapshotter)
     ) -> RunWorkerResult:
-        if scale_factor >= 1:
-            # it has to be an int
-            assert int(scale_factor) == scale_factor, (
-                "Scale factor has to be integer >= 1"
-            )
+        if scale_factor.is_integer():
             scale_factor = int(scale_factor)
 
         # check that scalefactor is prepared  /availabe in validator
@@ -172,7 +168,7 @@ class RunTool:
                 )
             return RunWorkerResult(msg=err, err=err)
 
-        parquet_dir = f"{self.base_parquet_dir}/sf{scale_factor}/"
+        parquet_dir = f"{self.base_parquet_dir}/sf{scale_factor:g}/"
         cmd = f"./db {parquet_dir}"
         runner = FastTestPool.get(
             cmd,
