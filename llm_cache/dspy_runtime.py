@@ -233,6 +233,12 @@ class ConversationSummary(dspy.Signature):
     )
 
 
+RLM_INSTRUCTOR_SIGNATURE = (
+    "task, conversation_context, workspace_contract, artifacts_in_context "
+    "-> worker_guidance"
+)
+
+
 @dataclass
 class DspyCacheEntry:
     final_output: str
@@ -477,6 +483,8 @@ class DspyBespokeAgent:
         artifacts_in_context: str | None = None,
         config_kwargs: dict[str, Any] | None = None,
         callbacks: list[Any] | None = None,
+        instructor_model_name: str | None = None,
+        instructor_lm: dspy.LM | None = None,
     ) -> None:
         self.model_name = model_name
         self.lm = lm
@@ -490,12 +498,26 @@ class DspyBespokeAgent:
         self.artifacts_in_context = artifacts_in_context
         self.config_kwargs = config_kwargs or {}
         self.callbacks = callbacks or []
+        self.instructor_model_name = instructor_model_name
+        self.instructor_lm = instructor_lm
         self.total_saved = 0.0
         self.llm_was_cached = False
         self.program = dspy.ReAct(
             BespokeAgentSignature,
             tools=self.tools.enabled_tools(),
             max_iters=20,
+        )
+        self.instruction_program = (
+            dspy.RLM(
+                RLM_INSTRUCTOR_SIGNATURE,
+                max_iterations=12,
+                max_llm_calls=24,
+                max_output_chars=40_000,
+                sub_lm=self.lm,
+                verbose=False,
+            )
+            if self.instructor_lm is not None
+            else None
         )
         dspy.configure(lm=self.lm, track_usage=True, callbacks=self.callbacks)
 
@@ -523,8 +545,37 @@ class DspyBespokeAgent:
             "query_gen_list": self.query_gen_list,
             "artifacts_in_context": self.artifacts_in_context,
             "config_kwargs": self.config_kwargs,
+            "instructor_model": self.instructor_model_name,
         }
         return utils.sha256(utils.stable_json(payload))
+
+    def _write_worker_instructions(
+        self,
+        *,
+        task: str,
+        conversation_context: str,
+        workspace_contract: str,
+    ) -> str:
+        if self.instruction_program is None or self.instructor_lm is None:
+            return workspace_contract
+
+        with dspy.context(lm=self.instructor_lm):
+            pred = self.instruction_program(
+                task=task,
+                conversation_context=conversation_context,
+                workspace_contract=workspace_contract,
+                artifacts_in_context=self.artifacts_in_context or "",
+            )
+        instructions = str(getattr(pred, "worker_guidance", pred)).strip()
+        if not instructions:
+            return workspace_contract
+        return "\n\n".join(
+            [
+                workspace_contract,
+                "RLM instructor guidance for the worker model:",
+                instructions,
+            ]
+        )
 
     def _restore_cached_snapshot(self, entry: DspyCacheEntry, path: Path) -> bool:
         if self.snapshotter is None:
@@ -688,6 +739,11 @@ class DspyBespokeAgent:
             )
 
         history_len = len(getattr(self.lm, "history", []) or [])
+        workspace_contract = self._write_worker_instructions(
+            task=task,
+            conversation_context=conversation_context,
+            workspace_contract=workspace_contract,
+        )
         pred = self.program(
             task=task,
             conversation_context=conversation_context,

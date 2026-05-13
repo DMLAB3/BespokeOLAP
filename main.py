@@ -38,7 +38,7 @@ from tools.validate_tool.query_validator_class import QueryValidator
 from tools.validate_tool.sf_list_gen import gen_sf
 from utils.cli_config import add_common_args
 from utils.general_utils import write_query_and_args_file
-from utils.model_setup import setup_dspy_model_config
+from utils.model_setup import setup_dspy_instructor_model_config, setup_dspy_model_config
 from utils.pkgconfig import check_pkg
 from utils.truncate_model_log import truncate_model_final_output
 from utils.wandb_stats_logging import WandbRunHook
@@ -99,6 +99,9 @@ async def main(args: argparse.Namespace) -> None:
             "--start_snapshot and --storage_plan_snapshot are not supported."
         )
     storage_plan = None
+    storage_plan_path = getattr(args, "storage_plan_path", None)
+    if storage_plan_path:
+        storage_plan = Path(storage_plan_path).read_text()
 
     artifacts_in_context = ""
     disable_artifacts_context = getattr(args, "disable_artifacts_context", False)
@@ -211,6 +214,12 @@ async def main(args: argparse.Namespace) -> None:
         else [DspyWandbCallback(None, llm_log_path=llm_log_path)]
     )
     model_name, lm = setup_dspy_model_config(args.model, callbacks=dspy_callbacks)
+    instructor_model_name = None
+    instructor_lm = None
+    if getattr(args, "use_rlm_instructor", False):
+        instructor_model_name, instructor_lm = setup_dspy_instructor_model_config(
+            args.rlm_instructor_model
+        )
     underlying_session = AdvancedSQLiteSession(
         session_id=args.conv_name, create_tables=True
     )
@@ -245,6 +254,8 @@ async def main(args: argparse.Namespace) -> None:
         artifacts_in_context=artifacts_in_context,
         config_kwargs=config_kwargs,
         callbacks=dspy_callbacks,
+        instructor_model_name=instructor_model_name,
+        instructor_lm=instructor_lm,
     )
 
     workspace_contract = "".join(

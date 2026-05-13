@@ -1,0 +1,14 @@
+required group field_id=-1 duckdb_schema {
+  optional int64 field_id=-1 t_tripkey (Int(bitWidth=64, isSigned=true));
+  optional int64 field_id=-1 t_custkey (Int(bitWidth=64, isSigned=true));
+  optional int64 field_id=-1 t_driverkey (Int(bitWidth=64, isSigned=true));
+  optional int64 field_id=-1 t_vehiclekey (Int(bitWidth=64, isSigned=true));
+  optional int64 field_id=-1 t_pickuptime (Timestamp(isAdjustedToUTC=false, timeUnit=microseconds, is_from_converted_type=false, force_set_converted_type=false));
+  optional int64 field_id=-1 t_dropofftime (Timestamp(isAdjustedToUTC=false, timeUnit=microseconds, is_from_converted_type=false, force_set_converted_type=false));
+  optional int64 field_id=-1 t_fare (Decimal(precision=15, scale=5));
+  optional int64 field_id=-1 t_tip (Decimal(precision=15, scale=5));
+  optional int64 field_id=-1 t_totalamount (Decimal(precision=15, scale=5));
+  optional int64 field_id=-1 t_distance (Decimal(precision=15, scale=5));
+  optional binary field_id=-1 t_pickuploc;
+  optional binary field_id=-1 t_dropoffloc;
+}

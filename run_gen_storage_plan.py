@@ -41,6 +41,13 @@ def main(args):
         auto_u=args.auto_u,
         auto_finish=args.auto_finish,
         model=args.model,
+        disable_wandb=getattr(args, "disable_wandb", False),
+        disable_tracing=getattr(args, "disable_tracing", False),
+        replay=getattr(args, "replay", False),
+        artifacts_dir=getattr(args, "artifacts_dir", "/home/mk/"),
+        only_from_llm_cache=getattr(args, "only_from_llm_cache", False),
+        use_rlm_instructor=getattr(args, "use_rlm_instructor", False),
+        rlm_instructor_model=getattr(args, "rlm_instructor_model", None),
     )
 
     # create conversation
@@ -115,8 +122,13 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
         include_replay_cache=True,
         include_benchmark=True,
         include_model=True,
+        include_disable_wandb=True,
+        include_disable_tracing=True,
         include_auto_u=True,
         include_auto_finish=True,
+        include_replay=True,
+        include_only_from_llm_cache=True,
+        include_artifacts_dir=True,
     )
     return parser
 

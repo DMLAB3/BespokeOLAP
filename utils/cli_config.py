@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 
 DEFAULT_MODEL = "gemini/gemini-3.1-flash-lite"
+DEFAULT_RLM_INSTRUCTOR_MODEL = "gemini/gemini-3-pro-preview"
 DEFAULT_ARTIFACTS_DIR = "/home/mk/"
 DEFAULT_PARQUET_DIR = "/home/mk/"
 
@@ -20,6 +21,9 @@ def build_run_config(
     disable_tracing: bool = False,
     disable_wandb: bool = False,
     model: str = DEFAULT_MODEL,
+    use_rlm_instructor: bool = False,
+    rlm_instructor_model: str = DEFAULT_RLM_INSTRUCTOR_MODEL,
+    storage_plan_path: str | None = None,
     base_parquet_dir: str = DEFAULT_PARQUET_DIR,
     artifacts_dir: str = DEFAULT_ARTIFACTS_DIR,
     no_preload: bool = False,
@@ -48,6 +52,9 @@ def build_run_config(
         disable_tracing=disable_tracing,
         disable_wandb=disable_wandb,
         model=model,
+        use_rlm_instructor=use_rlm_instructor,
+        rlm_instructor_model=rlm_instructor_model,
+        storage_plan_path=storage_plan_path,
         artifacts_dir=artifacts_dir,
         no_preload=no_preload,
         notify=notify,
@@ -99,6 +106,20 @@ def add_common_args(
             "--model",
             default=DEFAULT_MODEL,
             help="Model ID to use for the agent.",
+        )
+        parser.add_argument(
+            "--use-rlm-instructor",
+            action="store_true",
+            default=False,
+            help=(
+                "Use a stronger DSPy RLM instructor to write task guidance before "
+                "the main agent runs on --model."
+            ),
+        )
+        parser.add_argument(
+            "--rlm-instructor-model",
+            default=DEFAULT_RLM_INSTRUCTOR_MODEL,
+            help="Stronger model ID to use for the optional RLM instructor.",
         )
 
     if include_benchmark:

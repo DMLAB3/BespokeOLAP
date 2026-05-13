@@ -46,15 +46,6 @@ def main(args):
     # assemble default sf values for the selected benchmark
     verify_sf_list, max_scale_factor = gen_sf(benchmark)
 
-    if with_storage_plan:
-        raise ValueError(
-            "--with_storage_plan depended on restoring a git snapshot from a "
-            "previous storage-plan run. Git snapshots are disabled in the DSPy "
-            "runtime, so generate a base implementation without "
-            "--with_storage_plan or place a storage_plan.txt in ./output and use "
-            "manual/continue mode."
-        )
-
     config = build_run_config(
         benchmark=benchmark,
         conv_name=short_name,
@@ -72,7 +63,23 @@ def main(args):
         replay=args.replay,
         model=args.model,
         only_from_llm_cache=args.only_from_llm_cache,
+        use_rlm_instructor=getattr(args, "use_rlm_instructor", False),
+        rlm_instructor_model=getattr(args, "rlm_instructor_model", None),
+        artifacts_dir=getattr(args, "artifacts_dir", "/home/mk/"),
     )
+
+    storage_plan_path = None
+    if with_storage_plan:
+        source_storage_plan_path = Path(args.storage_plan_path)
+        if not source_storage_plan_path.exists():
+            raise FileNotFoundError(
+                f"Storage plan file not found: {source_storage_plan_path}"
+            )
+        storage_plan_dir = Path(config.artifacts_dir) / "cache" / "storage_plans"
+        storage_plan_dir.mkdir(parents=True, exist_ok=True)
+        storage_plan_path = storage_plan_dir / f"{benchmark}_{short_name}.txt"
+        storage_plan_path.write_text(source_storage_plan_path.read_text())
+        config.storage_plan_path = storage_plan_path.as_posix()
 
     # get sample query args for later use in the conversation (e.g. for better prompt formatting)
     sample_query_args_dict: Dict[str, str] = get_sample_query_args(config)
@@ -86,7 +93,7 @@ def main(args):
         artifacts_dir=Path(config.artifacts_dir),
         conversation_dir=Path(config.artifacts_dir) / "conversations",
         benchmark=benchmark,
-        read_storage_plan=False,
+        read_storage_plan=with_storage_plan,
         sample_query_args_dict=sample_query_args_dict,
     )
 
@@ -290,7 +297,15 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
         "--with_storage_plan",
         action="store_true",
         default=False,
-        help="Unsupported in the no-snapshot DSPy runtime.",
+        help="Read a storage plan and inject it into output/storage_plan.txt.",
+    )
+    parser.add_argument(
+        "--storage-plan-path",
+        default="output/storage_plan.txt",
+        help=(
+            "Path to the storage plan to use with --with_storage_plan. The file "
+            "is copied outside output/ before the fresh base run starts."
+        ),
     )
 
     add_common_args(
@@ -305,6 +320,7 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
         include_auto_finish=True,
         include_replay=True,
         include_only_from_llm_cache=True,
+        include_artifacts_dir=True,
     )
     return parser
 

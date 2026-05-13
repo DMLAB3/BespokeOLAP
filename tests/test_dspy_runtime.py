@@ -12,7 +12,12 @@ from llm_cache.dspy_runtime import (
     DspyToolbox,
     DspyWandbCallback,
 )
-from utils.model_setup import DEFAULT_DSPY_MODEL, setup_dspy_model_config
+from utils.model_setup import (
+    DEFAULT_DSPY_INSTRUCTOR_MODEL,
+    DEFAULT_DSPY_MODEL,
+    setup_dspy_instructor_model_config,
+    setup_dspy_model_config,
+)
 
 
 class FakeSnapshotter:
@@ -74,10 +79,17 @@ class FakeRunTool:
 class FakeProgram:
     def __init__(self):
         self.calls = 0
+        self.last_kwargs = None
 
     def __call__(self, **kwargs):
         self.calls += 1
+        self.last_kwargs = kwargs
         return SimpleNamespace(final_output=f"final {self.calls}")
+
+
+class FakeInstructorProgram:
+    def __call__(self, **kwargs):
+        return SimpleNamespace(worker_guidance="Prefer small, verified edits.")
 
 
 def test_setup_dspy_model_config_requires_gemini_key(monkeypatch):
@@ -105,6 +117,18 @@ def test_setup_dspy_model_config_installs_callbacks(monkeypatch):
     setup_dspy_model_config(callbacks=[callback])
 
     assert dspy.settings.callbacks == [callback]
+
+
+def test_setup_dspy_instructor_model_config_default_and_override(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+    model_name, lm = setup_dspy_instructor_model_config()
+    assert model_name == DEFAULT_DSPY_INSTRUCTOR_MODEL
+    assert lm.model == DEFAULT_DSPY_INSTRUCTOR_MODEL
+
+    model_name, lm = setup_dspy_instructor_model_config("gemini/custom-pro")
+    assert model_name == "gemini/custom-pro"
+    assert lm.model == "gemini/custom-pro"
 
 
 def test_dspy_toolbox_wraps_patch_compile_and_run(tmp_path):
@@ -194,6 +218,50 @@ def test_dspy_run_cache_disabled_without_snapshotter(tmp_path):
     assert agent.run(**kwargs) == "final 2"
     assert fake_program.calls == 2
     assert agent.llm_was_cached is False
+
+
+def test_dspy_agent_prepends_rlm_instructor_guidance(tmp_path):
+    toolbox = DspyToolbox(
+        workspace_path=tmp_path,
+        cache_path=tmp_path / "cache",
+        snapshotter=None,
+        compile_tool=None,
+        run_tool=None,
+        wandb_metrics_hook=None,
+    )
+    agent = DspyBespokeAgent(
+        model_name="gemini/worker",
+        lm=dspy.LM("gemini/worker", api_key="test-key"),
+        tools=toolbox,
+        llm_cache_dir=tmp_path / "llm-cache",
+        snapshotter=None,
+        workspace_path=tmp_path,
+        instructor_model_name="gemini/instructor",
+        instructor_lm=dspy.LM("gemini/instructor", api_key="test-key"),
+    )
+    fake_program = FakeProgram()
+    agent.program = fake_program  # type: ignore[assignment]
+    agent.instruction_program = FakeInstructorProgram()  # type: ignore[assignment]
+
+    assert (
+        agent.run(
+            task="write a file",
+            conversation_context="none",
+            workspace_contract="contract",
+            max_turns=2,
+        )
+        == "final 1"
+    )
+    assert fake_program.last_kwargs is not None
+    assert "contract" in fake_program.last_kwargs["workspace_contract"]
+    assert (
+        "RLM instructor guidance for the worker model"
+        in fake_program.last_kwargs["workspace_contract"]
+    )
+    assert (
+        "Prefer small, verified edits."
+        in fake_program.last_kwargs["workspace_contract"]
+    )
 
 
 def test_dspy_session_store_persists_summary_and_recent_turns(tmp_path):

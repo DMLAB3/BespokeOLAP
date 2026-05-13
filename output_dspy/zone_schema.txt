@@ -1,0 +1,9 @@
+required group field_id=-1 duckdb_schema {
+  optional int64 field_id=-1 z_zonekey (Int(bitWidth=64, isSigned=true));
+  optional binary field_id=-1 z_gersid (String);
+  optional binary field_id=-1 z_country (String);
+  optional binary field_id=-1 z_region (String);
+  optional binary field_id=-1 z_name (String);
+  optional binary field_id=-1 z_subtype (String);
+  optional binary field_id=-1 z_boundary;
+}
