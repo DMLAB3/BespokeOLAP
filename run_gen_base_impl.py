@@ -11,9 +11,8 @@ from conversations.conversation import (
     VALIDATE_OUTPUT_STDOUT_OFF,
 )
 from runtime.orchestrator.runner import run_conv_wrapper
-from tools.validate_tool.sf_list_gen import gen_sf
-from utils.cli_config import add_common_args, build_run_config
-from utils.gen_common import parse_query_ids
+from runtime.services import prepare_base_impl_run
+from utils.cli_config import add_common_args
 from utils.get_sample_q_args import get_sample_query_args
 
 ### RUN CMD
@@ -21,65 +20,14 @@ from utils.get_sample_q_args import get_sample_query_args
 
 
 def main(args):
-    # extract parameters
+    prepared = prepare_base_impl_run(args)
     with_storage_plan = args.with_storage_plan
-    short_name = args.conv
-    benchmark = args.benchmark
-
-    # extract queries from short name
-    prefix = "basef"
-    assert short_name.startswith(prefix)
-
-    assert "wstorage" not in short_name, (
-        f"Use --with_storage_plan flag instead of encoding it in the conversation name {short_name}. This is automatically added to the versioning string"
-    )
-
-    if "v" in short_name:
-        query_ids = parse_query_ids(short_name, prefix, benchmark=benchmark)
-        assert query_ids is not None, (
-            f"Could not parse query ids from short name {short_name}"
-        )
-
-    if with_storage_plan:
-        short_name += "_wstorage"
-
-    # assemble default sf values for the selected benchmark
-    verify_sf_list, max_scale_factor = gen_sf(benchmark)
-
-    config = build_run_config(
-        benchmark=benchmark,
-        conv_name=short_name,
-        conv_mode="scripted",
-        query_list=",".join(map(str, query_ids)),
-        notify=args.notify,
-        max_scale_factor=max_scale_factor,
-        replay_cache=args.replay_cache,
-        keep_csv=True,  # keep .csv files around instead of git-ignoring them (maybe to backtrack correctness issues)
-        disable_tracing=args.disable_tracing,
-        disable_wandb=args.disable_wandb,  # TODO fix this, by overwriting sys.args
-        auto_u=args.auto_u,
-        auto_finish=args.auto_finish,
-        is_bespoke_storage=with_storage_plan,
-        replay=args.replay,
-        model=args.model,
-        only_from_llm_cache=args.only_from_llm_cache,
-        use_rlm_instructor=getattr(args, "use_rlm_instructor", False),
-        rlm_instructor_model=getattr(args, "rlm_instructor_model", None),
-        artifacts_dir=getattr(args, "artifacts_dir", "/home/mk/"),
-    )
-
-    storage_plan_path = None
-    if with_storage_plan:
-        source_storage_plan_path = Path(args.storage_plan_path)
-        if not source_storage_plan_path.exists():
-            raise FileNotFoundError(
-                f"Storage plan file not found: {source_storage_plan_path}"
-            )
-        storage_plan_dir = Path(config.artifacts_dir) / "cache" / "storage_plans"
-        storage_plan_dir.mkdir(parents=True, exist_ok=True)
-        storage_plan_path = storage_plan_dir / f"{benchmark}_{short_name}.txt"
-        storage_plan_path.write_text(source_storage_plan_path.read_text())
-        config.storage_plan_path = storage_plan_path.as_posix()
+    short_name = prepared.short_name
+    benchmark = prepared.benchmark
+    query_ids = prepared.query_ids
+    verify_sf_list = prepared.verify_sf_list
+    max_scale_factor = prepared.max_scale_factor
+    config = prepared.config
 
     # get sample query args for later use in the conversation (e.g. for better prompt formatting)
     sample_query_args_dict: Dict[str, str] = get_sample_query_args(config)

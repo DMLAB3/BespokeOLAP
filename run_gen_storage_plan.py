@@ -5,50 +5,19 @@ import sys
 from pathlib import Path
 
 from runtime.orchestrator.runner import run_conv_wrapper
+from runtime.services import prepare_storage_plan_run
 
 # add parent to path
 sys.path.append(os.path.join(os.getcwd(), ".."))
 from dataset.dataset_tables_dict import get_benchmark_schema
-from utils.cli_config import add_common_args, build_run_config
-from utils.gen_common import parse_query_ids
+from utils.cli_config import add_common_args
 
 
 def main(args):
-
-    # ===== CONFIGURATION =====
-    short_name = args.conv
-    benchmark = args.benchmark
-
-    # extract queries from short name
-    prefix = "storageplan"
-    assert short_name.startswith(prefix)  # b-ase
-    if "v" in short_name:
-        query_ids = parse_query_ids(short_name, prefix, benchmark=benchmark)
-        assert query_ids is not None, f"Failed to parse query ids from {short_name}"
-
-    max_scale_factor = 0.01
-    # =========================
-
-    config = build_run_config(
-        benchmark=benchmark,
-        conv_name=short_name,
-        query_list=",".join(map(str, query_ids)),
-        notify=args.notify,
-        conv_mode="scripted",
-        max_scale_factor=max_scale_factor,
-        disable_valtool=True,
-        replay_cache=args.replay_cache,
-        auto_u=args.auto_u,
-        auto_finish=args.auto_finish,
-        model=args.model,
-        disable_wandb=getattr(args, "disable_wandb", False),
-        disable_tracing=getattr(args, "disable_tracing", False),
-        replay=getattr(args, "replay", False),
-        artifacts_dir=getattr(args, "artifacts_dir", "/home/mk/"),
-        only_from_llm_cache=getattr(args, "only_from_llm_cache", False),
-        use_rlm_instructor=getattr(args, "use_rlm_instructor", False),
-        rlm_instructor_model=getattr(args, "rlm_instructor_model", None),
-    )
+    prepared = prepare_storage_plan_run(args)
+    benchmark = prepared.benchmark
+    short_name = prepared.short_name
+    config = prepared.config
 
     # create conversation
     create_conversation(

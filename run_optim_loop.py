@@ -1,72 +1,16 @@
 import argparse
-from pathlib import Path
 
 from runtime.orchestrator.runner import run_conv_wrapper
-from tools.validate_tool.sf_list_gen import gen_sf
-from utils.cli_config import add_common_args, build_run_config
-from utils.gen_common import parse_query_ids
+from runtime.services import prepare_optimization_run
+from utils.cli_config import add_common_args
 
 ### RUN CMD
 # python run_optim_loop.py --conv brunoptim1-22v1 --bespoke_storage --benchmark tpch --notify --replay_cache --auto_u --auto_finish
 
 
 def main(args):
-    # extract parameters
-    bespoke_storage = args.bespoke_storage
-    short_name = args.conv
-    benchmark = args.benchmark
-
-    # extract queries from short name
-    prefix = "runoptim"
-    assert short_name.startswith(prefix)
-
-    assert "wstorage" not in short_name, (
-        f"Use --bespoke_storage flag instead of encoding it in the conversation name {short_name}. This is automatically added to the versioning string"
-    )
-
-    if "v" in short_name:
-        query_ids = parse_query_ids(short_name, prefix, benchmark=benchmark)
-        assert query_ids is not None, (
-            f"Could not parse query ids from short name {short_name}"
-        )
-
-    if bespoke_storage:
-        short_name += "_wstorage"
-
-    # assemble default sf values for the selected benchmark
-    verify_sf_list, max_scale_factor = gen_sf(benchmark)
-
-    if benchmark not in {"tpch", "ceb", "spatial"}:
-        raise ValueError(f"Unknown benchmark {benchmark}")
-
-    output_dir = Path("output")
-    if not (output_dir / "query_impl.cpp").exists():
-        raise ValueError(
-            "Git snapshots are disabled in the DSPy runtime. "
-            "run_optim_loop.py now optimizes the current ./output workspace; "
-            "generate or place the baseline implementation there first."
-        )
-
-    config = build_run_config(
-        benchmark=benchmark,
-        conv_name=short_name,
-        conv_mode="optimization",  # delegate the optimization loop logic to the conversation instead of hardcoding it in the main function
-        query_list=",".join(map(str, query_ids)),
-        notify=args.notify,
-        max_scale_factor=max_scale_factor,
-        replay_cache=args.replay_cache,
-        continue_run=True,
-        keep_csv=True,  # keep .csv files around instead of git-ignoring them (maybe to backtrack correctness issues)
-        disable_tracing=args.disable_tracing,
-        disable_wandb=args.disable_wandb,
-        auto_u=args.auto_u,
-        auto_finish=args.auto_finish,
-        is_bespoke_storage=bespoke_storage,
-        run_tool_offer_trace_option=True,  # for optimization conversations, we want to offer the option to run with tracing compile flag enabled to collect more fine-grained performance data for the optimized plans
-        only_from_llm_cache=args.only_from_llm_cache,
-        only_from_cache=args.only_from_cache,
-        model=args.model,
-    )
+    prepared = prepare_optimization_run(args)
+    config = prepared.config
 
     # run conversation
     run_conv_wrapper(config)

@@ -3,15 +3,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import os
 import shutil
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from agents.extensions.memory import AdvancedSQLiteSession
-from agents.tracing import set_tracing_disabled
-from dotenv import load_dotenv
 
 import wandb
 from conversations.conversation import (
@@ -28,9 +24,9 @@ from dataset.query_gen_factory import get_placeholders_fn, get_query_gen
 from runtime.agent.callbacks import DspyWandbCallback
 from runtime.agent.dspy_agent import DspyBespokeAgent
 from runtime.agent.toolbox import DspyToolbox
-from llm_cache.logger import setup_logging
 from llm_cache.utils import ask_yes_no
 from runtime.agent.session_store import DspySessionStore
+from runtime.bootstrap import bootstrap_runtime
 from runtime.config import RuntimeConfig
 from tools.fasttest import copy_template_to
 from tools.fasttest.compile import CompileTool
@@ -41,7 +37,6 @@ from utils.general_utils import write_query_and_args_file
 from utils.model_setup import setup_dspy_instructor_model_config, setup_dspy_model_config
 from utils.truncate_model_log import truncate_model_final_output
 from utils.wandb_stats_logging import WandbRunHook
-from utils.weave_cache import configure_weave_cache_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +60,11 @@ def _clean_workspace_without_git(workspace_path: Path) -> None:
 
 
 async def run_runtime(args: argparse.Namespace) -> None:
-    workspace_path = Path("./output")
-    workspace_path.mkdir(exist_ok=True)
+    # Use paths from bootstrap (stored in args)
+    workspace_path = args._workspace_path
+    log_path = args._log_path
+    run_log_path = args._run_log_path
+    llm_log_path = args._llm_log_path
 
     cache_path = Path(args.artifacts_dir) / "cache"
     conversations_dir = Path(args.artifacts_dir) / "conversations"
@@ -126,12 +124,7 @@ async def run_runtime(args: argparse.Namespace) -> None:
     else:
         logger.warning(f'Continuing current files in "{workspace_path}".')
 
-    timestamp = getattr(args, "_log_timestamp", datetime.now().strftime("%Y%m%d_%H%M%S"))
-    log_path = workspace_path / "logs"
-    log_path.mkdir(parents=True, exist_ok=True)
-    run_log_path = log_path / f"{timestamp}_{args.conv_name}.log"
-    llm_log_path = log_path / f"{timestamp}_{args.conv_name}_llm_calls.jsonl"
-    setup_logging(logging.DEBUG, run_log_path)
+    # Logging was already setup by bootstrap_runtime; paths are in args
     logger.info("Logging to %s", run_log_path)
     logger.info("Logging full LLM calls to %s", llm_log_path)
 
@@ -437,34 +430,13 @@ def run_conv_wrapper(args: argparse.Namespace) -> None:
             "Are you really sure you want to continue the current output workspace? This does not start from a fresh template and might include unwanted files already present in output/."
         )
 
-    args._log_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    setup_logging(logging.DEBUG)
-
-    load_dotenv()
-    # Keep low-level agents.custom_span usage quiet in DSPy runtime mode.
-    set_tracing_disabled(True)
-    if not args.disable_tracing and not args.disable_wandb:
-        configure_weave_cache_dirs()
-        import weave
-
-        entity = os.getenv("WANDB_ENTITY", "learneddb")
-        project = os.getenv("WANDB_PROJECT", "bespoke-olap-agents")
-
-        weave.init(
-            f"{entity}/{project}",
-            settings={"log_level": "INFO", "print_call_link": False},
-        )
-
-        tags = [args.benchmark]
-        if args.is_bespoke_storage:
-            tags.append("bespoke-storage")
-
-        wandb.init(
-            config=vars(args),
-            entity=entity,
-            project=project,
-            name=f"{args.conv_name}",
-            tags=tags,
-        )
+    # Bootstrap initializes everything: filesystem, logging, tracing, wandb
+    workspace_path, log_path, run_log_path, llm_log_path = bootstrap_runtime(args=args)
+    
+    # Store paths in args for use by run_runtime
+    args._workspace_path = workspace_path
+    args._log_path = log_path
+    args._run_log_path = run_log_path
+    args._llm_log_path = llm_log_path
 
     asyncio.run(run_runtime(args))
