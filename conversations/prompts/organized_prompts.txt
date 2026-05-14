@@ -1,0 +1,407 @@
+Organized Prompt Library
+
+This file extracts and groups the prompt fragments found in conversations/prompts/.
+Each section preserves the original file content for easy reuse.
+
+---
+
+=== expert_knowledge.txt ===
+# Memory Access & Data Movement
+
+1. Ensure sequential memory access patterns
+Traverse memory linearly whenever possible. Seuquential access maximizes cache line utilization and hardware prefetch efficiency.
+
+2. Prefer pointer iteration over indexed access in tight loops - ensure sequential memory access patterns
+Sequential pointer traversal reduces address recomputation and improves auto-vectorization.
+
+3. Prefetch data when accessing through indices
+If you access arrays indirectly through an index list, the CPU cannot predict what memory will be needed next. Manually prefetching upcoming elements helps hide memory latency and reduces cache misses.
+
+4. Copy small records into local variables
+When repeatedly accessing multiple fields of a small struct, copy the struct into a local variable first. This allows the compiler to keep values in registers instead of reloading them from memory.
+
+5. Avoid unnecessary move or copy operations
+Use in-place construction and rely on compiler elision where possible.
+
+# Loop Structure & Invariants
+
+6. Hoist invariant work out of loops
+Any computation, lookup, or reference that does not change per iteration must be moved outside the loop.
+
+7. Eliminate repeated structural checks
+Do not repeatedly verify conditions that are constant or guaranteed.
+Compute once, cache once, or rely on established invariants.
+Also, if different conditions require different processing strategies, determine the strategy before the loop starts and then run the appropriate version. Avoid checking the same conditions repeatedly while scanning data.
+
+8. Decide execution strategy before entering the loop
+If multiple processing modes exist, select the mode once and run a dedicated loop variant.
+
+9. Avoid duplicating large loop bodies
+If several branches run almost identical loops with only small differences in filtering, combine them into one loop and control behavior with flags. This keeps code smaller, improves instruction cache usage, and helps the compiler optimize better.
+
+# Control Flow
+
+10. Minimize branching in inner loops
+Use early-continue filtering or direct predicate-based accumulation.
+Avoid auxiliary state flags if results can be inferred.
+
+11. Consider branchless computation when branch prediction is poor
+If control flow is unpredictable, replace branches with arithmetic masking.
+Computing a boolean condition and using it to control arithmetic (e.g., multiply by 0 or 1) can be faster than branching, especially in large scans.
+
+# Arithmetic & Computation Cost
+
+12. Remove expensive arithmetic from hot loops
+Avoid division or other high-latency operations per element.
+Precompute constants or perform normalization after aggregation.
+
+13. Avoid expensive general-purpose parsing in hot paths
+Do not use high-level string conversions or substring allocation inside tight loops (e.g. std::stoi, std::stod, substr).
+Prefer fixed-format, allocation-free parsing directly from raw memory.
+
+# Containers & Lookup Struktures
+
+14. Pre-size output containers using realistic estimates
+Estimate result size from selectivity or statistics to avoid dynamic growth.
+
+15. Replace repeated linear searches with indexed lookup structures
+Use hash-based or constant-time lookup instead of scanning collections repeatedly.
+
+# Algorithm Selection
+
+16. Use algorithms specialized for data characteristics
+For fixed-width numeric keys or sortable primitives, prefer non-comparison-based or domain-specific algorithms.
+
+# Compiler Optimization Signals
+
+17. Communicate aliasing guarantees
+Tell the compiler when memory regions do not overlap (e.g. restrict semantics).
+
+18. Inline hot functions when beneficial
+Reduces call overhead and exposes optimization opportunities.
+
+# Vectorizaton & Hardware Utilization
+
+19. Exploit SIMD parallelism where applicable
+Process multiple elements per iteration using vectorized comparisons and masked arithmetic.
+
+---
+
+=== expert_knowledge_abstract_old.txt ===
+An expert has given the following tips to consider when optimizing a custom in-memory OLAP database engine in C++. The workload is read-only and the set of queries is fixed.
+
+• Prefer query-specific physical layouts over generic ones. Store only the columns used by the fixed queries, partition data along the primary filter dimension (often time), and cluster or sort data to match common predicates and group-by keys.
+
+• Exploit the read-only nature of the data. Pre-join dimension tables into fact tables when joins are always the same, precompute frequently used expressions, and materialize partial or full aggregations that match the fixed query set.
+
+• Use aggressive data skipping. Maintain per-partition or per-chunk min/max (zone maps) on filtered columns, dictionary-ID presence sets for equality predicates, and lightweight bitmaps where selectivity is high.
+
+• Dictionary-encode all strings and low-cardinality columns. Execute predicates, joins, and group-bys on integer IDs instead of strings. Choose encodings per column and per partition to maximize compression and minimize memory bandwidth.
+
+• Sort or cluster data intentionally to improve both compression and execution speed. Sorting by filter and group-by keys enables RLE, delta encoding, better cache locality, and faster aggregations.
+
+• Eliminate general-purpose execution overhead. Build query-specific execution pipelines with no virtual dispatch, no iterator-style operators, and minimal branching. Hardcode predicate constants, join keys, and aggregation logic where possible.
+
+• Use vectorized execution throughout. Process data in fixed-size batches, combine predicates into single kernels, and carry selection vectors or bitsets instead of materializing intermediate results.
+
+• Leverage SIMD aggressively. Use SIMD comparisons for filters, SIMD hashing or probing where applicable, and branchless aggregation kernels to reduce misprediction and instruction overhead.
+
+• Optimize joins for fixed schemas. Prefer perfect hashing or array-based joins when keys are dense. Otherwise, build dimension hash tables once and reuse them across queries. Radix-partition joins when hash tables exceed cache.
+
+• Optimize aggregations for predictability. Use per-thread local aggregation with a merge phase. For dense or low-cardinality group keys, use direct indexing instead of hash tables.
+
+• Pre-size and specialize hash tables. Avoid rehashing, store hash values alongside keys, and use open-addressing or cache-friendly probing schemes.
+
+• Be NUMA-aware. Partition data by NUMA node, run scans locally, and replicate small read-only structures per node to avoid cross-socket traffic.
+
+• Avoid dynamic memory allocation in hot paths. Use arena or region allocators with query-lifetime memory and eliminate malloc/free during execution.
+
+• Avoid features that only benefit ad-hoc or mutable workloads. Skip cost-based optimizers, generic indexes, tuple-at-a-time execution, complex concurrency control, and transactional abstractions unless strictly required.
+
+• Implement optimizations in a high-impact order: 
+  1) columnar layout with partitioning and dictionary encoding
+  2) data skipping and projection pruning
+  3) clustering/sorting to match query patterns
+  4) precomputation (joins, expressions, aggregations)
+  5) vectorized and SIMD execution
+  6) NUMA-aware parallelism and memory placement
+  7) query-specific compiled execution pipelines
+
+---
+
+=== optim_pretext_general.txt ===
+You are an expert database engineer and skilled programmer.
+Optimize a specialized high-performance database engine in C++ that is tailored to only execute a predefined set of queries. The queries to be supported are listed in `$queries_path` ($num_queries $query_str).
+
+A basic implementation of the database engine is already done in your working directory.
+
+---
+
+=== optim_pretext_optim.txt ===
+Your task is to optimize the existing codebase to achieve the best possible performance for the given queries.
+
+During build, the database engine reads data from Arrow-Tables into a main-memory storage layout (in-memory database system).
+
+You can modify any part of the existing codebase to improve performance, including data structures, ${storage_layout}algorithms, compression, and execution strategies. Focus on optimizing query execution times while maintaining correctness of the results. You can also change the ingestion pipeline if needed.
+
+---
+
+=== optim_constraints.txt ===
+Hard constraints (must obey):
+- Leave the input/output interface unchanged.
+- Single-threaded C++ only.
+- Do not cheat by shifting work from execution to ingestion: No indexes, no materialized views, no pre-aggregation, no statistics collection used by execution, no query-result caching, no query-specific lookup tables or query-specific precomputed maps/arrays.
+- Maintain ONE storage layout for all queries (no multiple copies of the same logical data).
+- Storage layout must remain general enough that in theory arbitrary SQL could be executed.
+- Always load all data from Parquet during ingestion (do not skip rows or columns).
+
+---
+
+=== optim_pinning.txt ===
+Your Task is to adapt the query implementation code (`${query_impl_path}`) and pin the query-execution to a single logical CPU core. Do this to ensure deterministic performance measurements and reduce noise from scheduling variability. Use the same core for all implemented queries. 
+${affinity_prompt}
+Pin to core ${core_id}.
+
+---
+
+=== optim_add_timings_collect_stats.txt ===
+# Objective
+Add comprehensive tracing instrumentation to measure query execution timing and row flow. The goal is to produce actionable data that identifies bottlenecks and validates optimizations.
+
+# Requirements
+## 1. Compilation & Overhead
+- All profiling code must be behind #ifdef TRACE
+- Zero overhead when compiled without the flag
+- No allocations or I/O in hot paths—print results once at query end
+- Use high-resolution timers (nanosecond precision)
+
+## 2. Output Format
+Stable, machine-parsable output with two line types:
+```
+PROFILE <section_name> <nanoseconds>
+COUNT <counter_name> <value>
+```
+Names should reflect the specific query, and phase. E.g. `q1_titlescan_decode`, ...
+
+## 3. Row Count Instrumentation
+Track data flow through each operator:
+
+Scan counters:
+- rows_scanned - Total rows read
+- rows_emitted - Rows passing filter (rows_scanned - rows_filtered_out)
+
+Join counters:
+- build_rows_in - Build side input rows
+- probe_rows_in - Probe side input rows
+- join_rows_emitted - Output rows
+
+Aggregation counters:
+- agg_rows_in - Input rows
+- groups_created - Distinct groups
+- agg_rows_emitted - Output rows (usually equals groups_created)
+
+Sort counters:
+- sort_rows_in
+- sort_rows_out
+
+General:
+- query_output_rows - Final result count
+
+## 4. Implementation Pattern
+Use RAII-style scoped timers:
+```
+#ifdef TRACE
+#define PROFILE_SCOPE(name) ScopedTimer _timer(name)
+class ScopedTimer {
+    const char* name;
+    uint64_t start_ns;
+public:
+    ScopedTimer(const char* n) : name(n), start_ns(get_time_ns()) {}
+    ~ScopedTimer() { record_timing(name, get_time_ns() - start_ns); }
+};
+#else
+#define PROFILE_SCOPE(name)
+#endif
+```
+Usage:
+```
+void execute_scan() {
+    PROFILE_SCOPE("scan_total");
+    {
+        PROFILE_SCOPE("scan_decode");
+        decode_data();
+    }
+    rows_scanned += n;
+}
+```
+
+# YOUR TASK
+Instrument the execution code of all queries to collect the tracing statistics. Use macros to add timing and counting instrumentation to all major operatorion (scan, join, aggregation, sort, etc.) and wherever you seem helpful according to the requirements above. Ensure that the output is stable and parsable, and that there is no overhead when TRACE is disabled.
+
+---
+
+=== optim_add_timings_collect_stats_per_query.txt ===
+
+---
+
+=== optim_w_expert_knowledge.txt ===
+${constraints}
+
+Optimize query ${query_id} using expert knowledge on high-performance in-memory OLAP systems.
+
+An expert has given the following tips to consider when optimizing a custom in-memory OLAP database engine in C++. The workload is read-only and the set of queries is fixed:
+
+${expert_knowledge}
+
+Apply this tipps to bring down query runtime to ${target_rt} for sf ${sf} (current rt: ${current_rt}).
+
+After making your changes, validate correctness and benchmark on scalefactor ${sf}. Make sure the performance improved. Otherwise, try again or remove your changes.
+
+Be carefull with changes that affect other queries${bespoke_storage_related}. Avoid regressions on the other queries.
+
+Turn off trace instrumentation in the run-tool for reliable benchmarking. Call run-tool with trace to gather updated statistics for bottleneck identification (will be written to `tracing_output.log`).
+
+---
+
+=== optim_w_human_reference.txt ===
+${constraints}
+
+Optimize query ${query_id} based on the collected tracing statistics in `tracing_output.log`.
+
+Reduce the query runtime to less than ${target_rt} for sf ${sf} (current runtime: ${current_rt}). Approach this as Prof. Thomas Neumann or Matthias Jasny would: apply every low-level technique available, leave nothing on the table. Focus on the bottlenecks identified in the tracing output, but also reconsider the overall approach if the remaining gap is large.
+
+Be carefull with changes that affect other queries${bespoke_storage_related}. Avoid regressions on the other queries.
+
+After making your changes, validate that the query produces correct results and improved performance compared to the previous version. Benchmark on scalefactor ${sf}.
+Make sure the performance improved. Otherwise, try again or remove your changes.
+
+---
+
+=== optim_w_trace.txt ===
+${constraints}
+
+Optimize the implementation of query ${query_id} based on the collected tracing statistics in `tracing_output.log`.
+
+Focus on the code sections that are the bottlenecks according to the tracing output. After making your changes, validate that the query produces correct results and improved performance compared to the previous version. If performance did not improve, re-read the tracing statistics to re-identify bottlenecks and try again.
+
+Target: reduce runtime to less than ${target_rt} for sf ${sf} (${factor}x improvement, current: ${current_rt}). Aim for even larger reductions where possible.
+
+Be carefull with changes that affect other queries${bespoke_storage_related}. Avoid regressions on the other queries.
+
+Turn off trace instrumentation in the run-tool for reliable benchmarking. Call run-tool with trace to gather updated statistics for bottleneck identification.
+Make sure the performance improved. Otherwise, try again or remove your changes.
+
+---
+
+=== optim_with_sample_plan.txt ===
+${constraints}
+
+Optimize the implementation of ${query_id} using this sample execution plan collected from DuckDB (sf ${sf}):
+${duckdb_plan}
+
+Study the plan to understand join order, cardinalities, operator choices, and data access patterns that the DuckDB optimizer arrived at. Use this structural insight to align the current implementation with the plan's informations (e.g. build/probe sides, filter selectivity, aggregation grouping).
+
+After making your changes, validate that the query produces correct results and measure performance compared to the previous version.
+Make sure the performance improved. Otherwise, try again or remove your changes.
+
+---
+
+=== python_run_gen_storage_plan.py ===
+Your task is to analyze the workload and produce a creative in-memory storage-layout summary for the tables accessed by the query. You have the flexibility to return detailed, free-form text that explores not only conventional storage-layout recommendations but also unconventional, novel, and even 'crazy' storage designs.
+You are encouraged to include additional ideas, new partitioning strategies, speculative encoding techniques, or experimental ways of grouping and organizing columns or data.
+For each accessed table, feel free to be inventive and elaborate on possibilities such as hybrid layouts, speculative SoA/AoS (Array of Structures/Structure of Arrays) approaches, novel column encodings, or adaptive partitioning.
+Use this as an opportunity to push beyond current norms and propose storage techniques that might be futuristic or outlandish.
+Output the storage layout for each table. Output only the final storage layout.
+${spatial_hint}
+
+Important:
+- store all the data, and store them in a way that it could be flattened back to the original data
+- do not store data redundantly, but you can use compression or encoding, meta data, or special datastructures
+- optimized for in-memory (single-node) analytical query processing
+
+The queries are listed in the file: ${queries_path}.
+The schema is:
+${schema}
+
+Based on the given queries and schema, provide a detailed and creative storage layout summary for the tables accessed by the query. Feel free to explore unconventional and novel storage designs, including speculative encoding techniques or experimental ways of organizing data. Write it to the file: `storage_plan.txt`.
+
+---
+
+=== python_run_gen_base_impl.py ===
+You are an expert database engineer and skilled programmer.
+Write a specialized high-performance database engine in C++ that is optimized to only execute a predefined set of queries.
+The database engine should run the SQL queries described in `${queries_path}` (${num_queries} ${query_str}). 
+Datatypes and operators can be hard-coded into the program to avoid interpretation overhead.
+
+First convert the tables from ArrowTable into a custom data-structure (build) in file ${builder_path}.
+Store it as a Database struct object (predefined in ${builder_path}). 
+Use an efficient in-memory representation of the data that allows fast execution of the queries. ${storage_hint}
+
+Then execute the queries on this data structure (execution). The execution logic interface is predefined in ${query_impl_path}.
+The query interface on an QueryRequest list where each request is one query to be executed.
+Each query is specified as: `<QUERY_NR> <QUERY_PARAMETERS>` (e.g. for query ${example_query} with parameters "EUROPE" and "1995-01-01": \"${example_query_params} EUROPE 1995-01-01\").
+To parse the QUERY_NR and PARAMETERS, use the header-only C++ parser defined in `${args_path}`.
+The database engine should execute all queries specified in the arg list sequentially.
+
+Write the output of each query into a separate csv file.
+Name it `result<RUN_NR>.csv` where `<RUN_NR>` is the position of the query in the arg list (starting from 1).
+CSV arguments: (delimiter=',', escapechar='\\', quotechar='"', header=True).
+
+You can get the table schemas like this: `parquet-dump-schema ${parquet_path}/lineitem.parquet`.
+
+Create a TODO plan with steps to implement such an database engine. Include conceptual comments of the data structure/... as well. Do not start the implementation yet.
+Write the steps and the query into a file where they can be later marked as done.
+Do not execute the steps yet.
+
+finish all todos. Focus on the build logic to convert ArrowTable into an efficient in-memory data structure (${builder_path}). For now use stubs for the query execution logic in ${query_impl_path}.
+
+Execute and check termination without error. First call the compile tool, then check the run tool (scalefactors ${sf_verify_str} and also ${max_scale_factor}). If there are errors, fix the implementation accordingly.
+
+add time measurement for execution. Exclude the csv output writing from the timing. Print/Output: once after each execution: "<RUN_NR> | Execution ms: YYY".
+
+Implementation flow generated by this Python script also includes per-query prompts:
+
+- Multi-query branch, first chunk:
+    - Lets start implementing the query execution logic. Implement all queries in the next steps step by step. Start with query ${query_ids[i]}... 
+    - Execute and check correctness of query ${query_ids[i]} by using the run tool. Run with scale_factor ${sf_verify_str}. If there are errors, fix the implementation accordingly.
+
+- Multi-query branch, later chunks:
+    - Next, continue implementing the query execution logic for query ${query_ids[i]}... 
+    - Execute and check correctness of query ${query_ids[i]} by using the run tool. Run with scale_factor ${sf_verify_str}. If there are errors, fix the implementation accordingly.
+
+- Single-query branch, first chunk:
+    - Lets start implementing the query execution logic. Implement all queries in the next steps step by step. Start with query ${query_ids[i]}.
+    - Execute and check correctness by using the run tool. Run with query_id "${query_ids[i]}" and scale_factor ${sf_verify_str}. If there are errors, fix the implementation accordingly.
+
+- Single-query branch, later chunks:
+    - Next, continue implementing the query execution logic for query ${query_ids[i]}.
+    - Execute and check correctness by using the run tool. Run with query_id "${query_ids[i]}" and scale_factor ${sf_verify_str}. If there are errors, fix the implementation accordingly.
+
+- Final verification and performance steps:
+    - Check correctness of the output of all queries by using the run tool. Run with scale_factor ${sf_verify_str}. Call the run tool once for all queries together. If there are errors, fix the implementation accordingly.
+    - Call the run tool with scale_factor ${max_scale_factor}. Benchmark the execution time of all queries. Fix any error if occurs.
+    - Optimize the build implementation. You should reduce build time to below 10 seconds for scale factor ${max_scale_factor}. Use multithreading, and make build as fast as duckdb. Run the implementation with scale_factor ${sf_verify_str} to check for correctness and measure speedup build time with scale_factor ${max_scale_factor}.
+
+${compaction_marker}
+
+Lets start implementing the query execution logic. Implement all queries in the next steps step by step. Start with ...
+Next, continue implementing the query execution logic for ...
+
+Check correctness of the output of all queries by using the run tool. Run with scale_factor ${sf_verify_str}. Call the run tool once for all queries together. If there are errors, fix the implementation accordingly.
+
+Call the run tool with scale_factor ${max_scale_factor}. Benchmark the execution time of all queries. Fix any error if occurs.
+
+Optimize the build implementation. You should reduce build time to below 10 seconds for scale factor ${max_scale_factor}. Use multithreading, and make build as fast as duckdb. Run the implementation with scale_factor ${sf_verify_str} to check for correctness and measure speedup build time with scale_factor ${max_scale_factor}.
+
+---
+
+=== python_prompts_gen.py ===
+The prompt helpers in conversations/prompts_gen.py load the .txt prompt fragments above and inject the following code-generated additions when needed:
+
+- When storage layout changes are disallowed:
+    - You are NOT allowed to change the storage layout. Leave it as Struct-of-Arrays. Do not change the ordering of columns.
+
+- When tracing prompts are parameterized per query and should refer back to previous queries:
+    - Align instrumentation with previous queries.
+
+- When trace- or runtime-specific prompt templates are instantiated in code, the parameters are substituted from the wrapper scripts and helper functions rather than being hard-coded in the .txt files.
